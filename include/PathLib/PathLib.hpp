@@ -312,12 +312,12 @@ class Path {
   }
 
   // check multiple status bits and combinations at once
-  [[nodiscard]] bool assert(Status flags) noexcept { return this->assert(flags, this->symlink_mode.has(SymlinkMode::FollowForStatus)); }
-  [[nodiscard]] bool assert(Status flags, bool resolve_symlinks) noexcept { return this->assert_any({flags}, resolve_symlinks); }
-  [[nodiscard]] bool assert_any(std::initializer_list<Status> combinations) noexcept {
-    return this->assert_any(combinations, this->symlink_mode.has(SymlinkMode::FollowForStatus));
+  [[nodiscard]] bool check(Status flags) noexcept { return this->check(flags, this->symlink_mode.has(SymlinkMode::FollowForStatus)); }
+  [[nodiscard]] bool check(Status flags, bool resolve_symlinks) noexcept { return this->check_any({flags}, resolve_symlinks); }
+  [[nodiscard]] bool check_any(std::initializer_list<Status> combinations) noexcept {
+    return this->check_any(combinations, this->symlink_mode.has(SymlinkMode::FollowForStatus));
   }
-  [[nodiscard]] bool assert_any(std::initializer_list<Status> combinations, bool resolve_symlinks) noexcept {
+  [[nodiscard]] bool check_any(std::initializer_list<Status> combinations, bool resolve_symlinks) noexcept {
     Status current_status = this->status(resolve_symlinks);
 
     // return true if any one flag combination matches is fully supported by the current path status
@@ -340,25 +340,25 @@ class Path {
   bool is_symlink() noexcept { return this->is_symlink(this->symlink_mode.has(SymlinkMode::FollowForStatus)); }
   bool is_unknown() noexcept { return this->is_unknown(this->symlink_mode.has(SymlinkMode::FollowForStatus)); }
 
-  bool exists(bool resolve_symlinks) noexcept { return this->assert(Exists, resolve_symlinks); }
-  bool not_found(bool resolve_symlinks) noexcept { return this->assert(NotFound, resolve_symlinks); }
-  bool is_block_file(bool resolve_symlinks) noexcept { return this->assert(IsBlock, resolve_symlinks); }
-  bool is_character_file(bool resolve_symlinks) noexcept { return this->assert(IsCharacter, resolve_symlinks); }
-  bool is_directory(bool resolve_symlinks) noexcept { return this->assert(IsDirectory, resolve_symlinks); }
+  bool exists(bool resolve_symlinks) noexcept { return this->check(Exists, resolve_symlinks); }
+  bool not_found(bool resolve_symlinks) noexcept { return this->check(NotFound, resolve_symlinks); }
+  bool is_block_file(bool resolve_symlinks) noexcept { return this->check(IsBlock, resolve_symlinks); }
+  bool is_character_file(bool resolve_symlinks) noexcept { return this->check(IsCharacter, resolve_symlinks); }
+  bool is_directory(bool resolve_symlinks) noexcept { return this->check(IsDirectory, resolve_symlinks); }
   bool is_empty(bool resolve_symlinks) noexcept {
     // when not resolving symlinks, symlinks are not empty but a symlink
     if (!resolve_symlinks && this->is_symlink(resolve_symlinks)) return false;
     // otherwise, follow symlinks with default behavior
     return this->fs_is_empty();
   }
-  bool is_fifo(bool resolve_symlinks) noexcept { return this->assert(IsFifo, resolve_symlinks); }
+  bool is_fifo(bool resolve_symlinks) noexcept { return this->check(IsFifo, resolve_symlinks); }
   bool is_other(bool resolve_symlinks) noexcept {
-    return this->exists(resolve_symlinks) && !this->assert_any({IsFile, IsDirectory, IsSymlink}, resolve_symlinks);
+    return this->exists(resolve_symlinks) && !this->check_any({IsFile, IsDirectory, IsSymlink}, resolve_symlinks);
   }
-  bool is_file(bool resolve_symlinks) noexcept { return this->assert(IsFile, resolve_symlinks); }
-  bool is_socket(bool resolve_symlinks) noexcept { return this->assert(IsSocket, resolve_symlinks); }
-  bool is_symlink(bool resolve_symlinks) noexcept { return this->assert(IsSymlink, resolve_symlinks); }
-  bool is_unknown(bool resolve_symlinks) noexcept { return this->assert(IsUnknown, resolve_symlinks); }
+  bool is_file(bool resolve_symlinks) noexcept { return this->check(IsFile, resolve_symlinks); }
+  bool is_socket(bool resolve_symlinks) noexcept { return this->check(IsSocket, resolve_symlinks); }
+  bool is_symlink(bool resolve_symlinks) noexcept { return this->check(IsSymlink, resolve_symlinks); }
+  bool is_unknown(bool resolve_symlinks) noexcept { return this->check(IsUnknown, resolve_symlinks); }
 
   bool is_writable() noexcept {
     // TODO
@@ -381,7 +381,7 @@ class Path {
   }
 
   bool parent_exists() noexcept { return this->parent_exists(this->symlink_mode.has(SymlinkMode::FollowForStatus)); }
-  bool parent_exists(bool resolve_symlinks) noexcept { return this->assert(ParentExists, resolve_symlinks); }
+  bool parent_exists(bool resolve_symlinks) noexcept { return this->check(ParentExists, resolve_symlinks); }
 
   // =============================
   // === filesystem operations ===

@@ -17,27 +17,27 @@ TEST_CASE("status()") {
   REQUIRE(path.good());
 }
 
-TEST_CASE("assert()") {
+TEST_CASE("check()") {
   TestEnvironment environment;
 
   PathLib::Path path(environment.file_in_directory_a);
-  // assert() is true if path exists and is a file
-  REQUIRE(path.assert(PathLib::Exists | PathLib::IsFile));
+  // check() is true if path exists and is a file
+  REQUIRE(path.check(PathLib::Exists | PathLib::IsFile));
   REQUIRE(path.good());
 }
 
-TEST_CASE("assert_any()") {
+TEST_CASE("check_any()") {
   TestEnvironment environment;
 
   PathLib::Path file_path(environment.file_in_directory_a);
   PathLib::Path dir_path(environment.directory_a);
-  // assert_any() is true if path exists and is a file or path exists and is a directory
-  REQUIRE(file_path.assert_any({PathLib::Exists | PathLib::IsFile, PathLib::Exists | PathLib::IsDirectory}));
-  REQUIRE(dir_path.assert_any({PathLib::Exists | PathLib::IsFile, PathLib::Exists | PathLib::IsDirectory}));
-  // if none of the combinations is true, assert_any() returns false
-  REQUIRE_FALSE(file_path.assert_any({PathLib::NotFound | PathLib::IsFile, PathLib::IsDirectory | PathLib::IsFile}));
-  // only one combination is equal to .assert(...)
-  REQUIRE_FALSE(dir_path.assert_any({PathLib::NotFound}));
+  // check_any() is true if path exists and is a file or path exists and is a directory
+  REQUIRE(file_path.check_any({PathLib::Exists | PathLib::IsFile, PathLib::Exists | PathLib::IsDirectory}));
+  REQUIRE(dir_path.check_any({PathLib::Exists | PathLib::IsFile, PathLib::Exists | PathLib::IsDirectory}));
+  // if none of the combinations is true, check_any() returns false
+  REQUIRE_FALSE(file_path.check_any({PathLib::NotFound | PathLib::IsFile, PathLib::IsDirectory | PathLib::IsFile}));
+  // only one combination is equal to .check(...)
+  REQUIRE_FALSE(dir_path.check_any({PathLib::NotFound}));
 
   REQUIRE(file_path.good());
   REQUIRE(dir_path.good());
