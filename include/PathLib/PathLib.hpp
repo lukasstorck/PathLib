@@ -1,14 +1,135 @@
 #pragma once
 
+#include <fcntl.h>
+#include <grp.h>
+#include <pwd.h>
+#include <sys/stat.h>
+#include <unistd.h>
+
 #include <bitset>
 #include <cstring>
 #include <filesystem>
 #include <fstream>
 #include <utility>
+#include <variant>
+#include <vector>
+
+namespace fs = std::filesystem;
+
+namespace {
+bool is_process_file_group_owner(gid_t file_group_id, gid_t process_group_id) noexcept {
+  // direct group id match
+  bool group_id_matches = file_group_id == process_group_id;
+
+  // check secondary groups
+  if (!group_id_matches) {
+    int group_count = getgroups(0, nullptr);
+    std::vector<gid_t> process_groups(group_count);
+    getgroups(group_count, process_groups.data());
+
+    for (auto group_id : process_groups) {
+      // secondary group id match
+      if (group_id == file_group_id) group_id_matches = true;
+    }
+  }
+
+  return group_id_matches;
+}
+
+std::pair<fs::perms, fs::perm_options> symbolic_permission_string_to_fs_perms_and_options(const std::string& permission) {
+  size_t i = 0;
+  fs::perm_options option;
+  fs::perms perms = fs::perms::none;
+
+  bool u = false, g = false, o = false;
+
+  // parse who (user, group, other)
+
+  while (i < permission.size()) {
+    char target_char = std::tolower(permission[i]);
+
+    if (target_char == 'u')
+      u = true;
+    else if (target_char == 'g')
+      g = true;
+    else if (target_char == 'o')
+      o = true;
+    else if (target_char == 'a')
+      u = g = o = true;
+    else
+      break;
+
+    ++i;
+  }
+
+  if (!(u || g || o)) u = g = o = true;
+
+  // parse operator (add, remove, replace)
+
+  if (i >= permission.size()) throw std::runtime_error("error while parsing permission string: missing operator");
+
+  char op = permission[i++];
+  if (op == '+')
+    option = fs::perm_options::add;
+  else if (op == '-')
+    option = fs::perm_options::remove;
+  else if (op == '=')
+    option = fs::perm_options::replace;
+  else
+    throw std::runtime_error("error while parsing permission string: invalid operator");
+
+  // parse permissions
+
+  while (i < permission.size()) {
+    char permission_char = std::tolower(permission[i++]);
+
+    switch (permission_char) {
+      case 'r':
+        if (u) perms |= fs::perms::owner_read;
+        if (g) perms |= fs::perms::group_read;
+        if (o) perms |= fs::perms::others_read;
+        break;
+
+      case 'w':
+        if (u) perms |= fs::perms::owner_write;
+        if (g) perms |= fs::perms::group_write;
+        if (o) perms |= fs::perms::others_write;
+        break;
+
+      case 'x':
+        if (u) perms |= fs::perms::owner_exec;
+        if (g) perms |= fs::perms::group_exec;
+        if (o) perms |= fs::perms::others_exec;
+        break;
+
+      case 's':
+        if (u) perms |= fs::perms::set_uid;
+        if (g) perms |= fs::perms::set_gid;
+        break;
+
+      case 't':
+        perms |= fs::perms::sticky_bit;
+        break;
+
+      default:
+        throw std::runtime_error("error while parsing permission string: invalid permission character");
+    }
+  }
+
+  return {perms, option};
+}
+}  // namespace
 
 namespace PathLib {
 
-namespace fs = std::filesystem;
+enum class PermissionMode : unsigned {
+  /// @brief  Replace existing permissions
+  Replace = 0,
+  /// @brief  Add permissions to existing
+  Add = 1,
+  /// @brief  Remove permissions from existing
+  Remove = 2,
+};
 
 enum class SymlinkMode : unsigned {
   /// \brief Do not follow symlinks
@@ -88,6 +209,23 @@ class Status {
     return output_stream;
   }
 
+  fs::perms fs_perms() const noexcept {
+    fs::perms perms = fs::perms::none;
+    if (this->has_any(StatusFlag::HasOwnerRead)) perms |= fs::perms::owner_read;
+    if (this->has_any(StatusFlag::HasOwnerWrite)) perms |= fs::perms::owner_write;
+    if (this->has_any(StatusFlag::HasOwnerExecute)) perms |= fs::perms::owner_exec;
+    if (this->has_any(StatusFlag::HasGroupRead)) perms |= fs::perms::group_read;
+    if (this->has_any(StatusFlag::HasGroupWrite)) perms |= fs::perms::group_write;
+    if (this->has_any(StatusFlag::HasGroupExecute)) perms |= fs::perms::group_exec;
+    if (this->has_any(StatusFlag::HasOtherRead)) perms |= fs::perms::others_read;
+    if (this->has_any(StatusFlag::HasOtherWrite)) perms |= fs::perms::others_write;
+    if (this->has_any(StatusFlag::HasOtherExecute)) perms |= fs::perms::others_exec;
+    if (this->has_any(StatusFlag::IsUidBitSet)) perms |= fs::perms::set_uid;
+    if (this->has_any(StatusFlag::IsGidBitSet)) perms |= fs::perms::set_gid;
+    if (this->has_any(StatusFlag::IsStickyBitSet)) perms |= fs::perms::sticky_bit;
+    return perms;
+  }
+
  private:
   constexpr explicit Status(unsigned bits) noexcept : bits_(bits) {}
   unsigned bits_ = 0;
@@ -95,34 +233,55 @@ class Status {
 
 // expose flags so that they are accessible as PathLib::IsFile
 
-inline constexpr Status NotFound        = StatusFlag::NotFound;
-inline constexpr Status Nonexistent     = StatusFlag::NotFound;
-inline constexpr Status Exists          = StatusFlag::Exists;
-inline constexpr Status IsFile          = StatusFlag::IsFile;
-inline constexpr Status IsRegular       = StatusFlag::IsFile;
-inline constexpr Status IsDirectory     = StatusFlag::IsDirectory;
-inline constexpr Status IsSymlink       = StatusFlag::IsSymlink;
-inline constexpr Status IsBlock         = StatusFlag::IsBlock;
-inline constexpr Status IsCharacter     = StatusFlag::IsCharacter;
-inline constexpr Status IsFifo          = StatusFlag::IsFifo;
-inline constexpr Status IsSocket        = StatusFlag::IsSocket;
-inline constexpr Status IsUnknown       = StatusFlag::IsUnknown;
-inline constexpr Status HasOwnerRead    = StatusFlag::HasOwnerRead;
-inline constexpr Status HasOwnerWrite   = StatusFlag::HasOwnerWrite;
-inline constexpr Status HasOwnerExecute = StatusFlag::HasOwnerExecute;
-inline constexpr Status HasOwnerAll     = HasOwnerRead | HasOwnerWrite | HasOwnerExecute;
-inline constexpr Status HasGroupRead    = StatusFlag::HasGroupRead;
-inline constexpr Status HasGroupWrite   = StatusFlag::HasGroupWrite;
-inline constexpr Status HasGroupExecute = StatusFlag::HasGroupExecute;
-inline constexpr Status HasGroupAll     = HasGroupRead | HasGroupWrite | HasGroupExecute;
-inline constexpr Status HasOtherRead    = StatusFlag::HasOtherRead;
-inline constexpr Status HasOtherWrite   = StatusFlag::HasOtherWrite;
-inline constexpr Status HasOtherExecute = StatusFlag::HasOtherExecute;
-inline constexpr Status HasOtherAll     = HasOtherRead | HasOtherWrite | HasOtherExecute;
-inline constexpr Status IsUidBitSet     = StatusFlag::IsUidBitSet;
-inline constexpr Status IsGidBitSet     = StatusFlag::IsGidBitSet;
-inline constexpr Status IsStickyBitSet  = StatusFlag::IsStickyBitSet;
-inline constexpr Status ParentExists    = StatusFlag::ParentExists;
+inline constexpr Status NotFound    = StatusFlag::NotFound;
+inline constexpr Status Nonexistent = StatusFlag::NotFound;
+inline constexpr Status Exists      = StatusFlag::Exists;
+inline constexpr Status IsFile      = StatusFlag::IsFile;
+inline constexpr Status IsRegular   = StatusFlag::IsFile;
+inline constexpr Status IsDirectory = StatusFlag::IsDirectory;
+inline constexpr Status IsSymlink   = StatusFlag::IsSymlink;
+inline constexpr Status IsBlock     = StatusFlag::IsBlock;
+inline constexpr Status IsCharacter = StatusFlag::IsCharacter;
+inline constexpr Status IsFifo      = StatusFlag::IsFifo;
+inline constexpr Status IsSocket    = StatusFlag::IsSocket;
+inline constexpr Status IsUnknown   = StatusFlag::IsUnknown;
+
+inline constexpr Status HasOwnerRead      = StatusFlag::HasOwnerRead;
+inline constexpr Status HasOwnerWrite     = StatusFlag::HasOwnerWrite;
+inline constexpr Status HasOwnerExecute   = StatusFlag::HasOwnerExecute;
+inline constexpr Status HasOwnerReadWrite = HasOwnerRead | HasOwnerWrite;
+inline constexpr Status HasOwnerAll       = HasOwnerReadWrite | HasOwnerExecute;
+
+inline constexpr Status HasGroupRead      = StatusFlag::HasGroupRead;
+inline constexpr Status HasGroupWrite     = StatusFlag::HasGroupWrite;
+inline constexpr Status HasGroupExecute   = StatusFlag::HasGroupExecute;
+inline constexpr Status HasGroupReadWrite = HasGroupRead | HasGroupWrite;
+inline constexpr Status HasGroupAll       = HasGroupReadWrite | HasGroupExecute;
+
+inline constexpr Status HasOtherRead      = StatusFlag::HasOtherRead;
+inline constexpr Status HasOtherWrite     = StatusFlag::HasOtherWrite;
+inline constexpr Status HasOtherExecute   = StatusFlag::HasOtherExecute;
+inline constexpr Status HasOtherReadWrite = HasOtherRead | HasOtherWrite;
+inline constexpr Status HasOtherAll       = HasOtherReadWrite | HasOtherExecute;
+
+inline constexpr Status IsUidBitSet    = StatusFlag::IsUidBitSet;
+inline constexpr Status IsGidBitSet    = StatusFlag::IsGidBitSet;
+inline constexpr Status IsStickyBitSet = StatusFlag::IsStickyBitSet;
+
+inline constexpr Status ParentExists = StatusFlag::ParentExists;
+
+inline constexpr PermissionMode Replace = PermissionMode::Replace;
+inline constexpr PermissionMode Add     = PermissionMode::Add;
+inline constexpr PermissionMode Remove  = PermissionMode::Remove;
+
+struct NoOwnerChangeType {};
+inline constexpr NoOwnerChangeType NO_CHANGE{};
+
+using UserType  = std::variant<uid_t, std::string, NoOwnerChangeType>;
+using GroupType = std::variant<gid_t, std::string, NoOwnerChangeType>;
+
+using PermissionType        = std::variant<Status, fs::perms, int, std::string>;
+using PermissionOptionsType = std::variant<PermissionMode, fs::perm_options, std::string>;
 
 struct safe_t {};
 inline constexpr safe_t safe_tag{};
@@ -240,6 +399,32 @@ class Path {
   // =================================
   // === file system object status ===
   // =================================
+
+  uid_t owner() noexcept { return this->owner(this->symlink_mode.has(SymlinkMode::FollowForStatus)); }
+  uid_t owner(bool resolve_symlinks) noexcept {
+    struct stat file_status;
+
+    if (resolve_symlinks) {
+      stat(this->fs_c_str(), &file_status);
+    } else {
+      lstat(this->fs_c_str(), &file_status);
+    }
+
+    return file_status.st_uid;
+  }
+
+  gid_t group() noexcept { return this->group(this->symlink_mode.has(SymlinkMode::FollowForStatus)); }
+  gid_t group(bool resolve_symlinks) noexcept {
+    struct stat file_status;
+
+    if (resolve_symlinks) {
+      stat(this->fs_c_str(), &file_status);
+    } else {
+      lstat(this->fs_c_str(), &file_status);
+    }
+
+    return file_status.st_gid;
+  }
 
   Status status() noexcept { return this->status(this->symlink_mode.has(SymlinkMode::FollowForStatus)); }
   Status status(bool resolve_symlinks) noexcept {
@@ -360,18 +545,55 @@ class Path {
   bool is_symlink(bool resolve_symlinks) noexcept { return this->check(IsSymlink, resolve_symlinks); }
   bool is_unknown(bool resolve_symlinks) noexcept { return this->check(IsUnknown, resolve_symlinks); }
 
-  bool is_writable() noexcept {
-    // TODO
-    this->safe([] { throw std::runtime_error("not implemented"); });
-    return false;
-    // std::ofstream file_stream(this->path_, std::ios::app);
-    // return file_stream.is_open();
+  bool is_readable() noexcept { return this->is_readable(this->symlink_mode.has(SymlinkMode::FollowForStatus)); }
+  bool is_readable(bool resolve_symlinks) noexcept {
+    Status status = this->status(resolve_symlinks);
+    if (!status.has_all(Exists)) return false;
+
+    uid_t file_owner_id = this->owner(resolve_symlinks);
+    gid_t file_group_id = this->group(resolve_symlinks);
+
+    uid_t process_user_id  = geteuid();
+    gid_t process_group_id = getegid();
+
+    // check file owner
+    bool owner_id_matches = file_owner_id == process_user_id;
+    if (owner_id_matches) return status.has_all(HasOwnerRead);
+
+    // check file group
+    bool group_id_matches = is_process_file_group_owner(file_group_id, process_group_id);
+    if (group_id_matches) return status.has_all(HasGroupRead);
+
+    // check file other permission
+    return status.has_all(HasOtherRead);
   }
 
-  bool is_readable() noexcept {
-    // TODO
-    this->safe([] { throw std::runtime_error("not implemented"); });
-    return false;
+  bool is_writable() noexcept { return this->is_writable(this->symlink_mode.has(SymlinkMode::FollowForStatus)); }
+  bool is_writable(bool resolve_symlinks) noexcept {
+    Status status = this->status(resolve_symlinks);
+    if (!status.has_all(Exists)) {
+      Path parent             = this->parent();
+      bool parent_is_writable = parent.is_writable(resolve_symlinks);
+      this->safe([&parent] { parent.raise(); });
+      return parent_is_writable;
+    }
+
+    uid_t file_owner_id = this->owner(resolve_symlinks);
+    gid_t file_group_id = this->group(resolve_symlinks);
+
+    uid_t process_user_id  = geteuid();
+    gid_t process_group_id = getegid();
+
+    // check file owner
+    bool owner_id_matches = file_owner_id == process_user_id;
+    if (owner_id_matches) return status.has_all(HasOwnerWrite);
+
+    // check file group
+    bool group_id_matches = is_process_file_group_owner(file_group_id, process_group_id);
+    if (group_id_matches) return status.has_all(HasGroupWrite);
+
+    // check file other permission
+    return status.has_all(HasOtherWrite);
   }
 
   bool is_root() noexcept {
@@ -445,19 +667,6 @@ class Path {
     return *this;
   }
 
-  // TODO: add tests, also add function to check permissions
-  Path& permissions() noexcept {
-    fs::perms permissions = fs::perms::owner_read | fs::perms::owner_write | fs::perms::group_read | fs::perms::others_read;
-    return this->permissions(permissions);
-  }
-
-  Path& permissions(fs::perms permissions) noexcept {
-    fs::perm_options options = fs::perm_options::replace | fs::perm_options::nofollow;
-    return this->permissions(permissions, options);
-  }
-
-  Path& permissions(fs::perms permissions, fs::perm_options options) noexcept { return this->fs_permissions(permissions, options); }
-
   Path& remove() noexcept { return this->remove(false); }
   Path& remove(bool recursive) noexcept {
     if (recursive) {
@@ -478,6 +687,153 @@ class Path {
     this->safe([&resolved_new_path] { resolved_new_path.raise(); });
 
     this->fs_rename(resolved_new_path);
+    return *this;
+  }
+
+  Path& set_owner(UserType user = NO_CHANGE, GroupType group = NO_CHANGE, bool recursive = false) noexcept {
+    return this->set_owner(user, group, recursive, this->symlink_mode.has(SymlinkMode::FollowForStatus));
+  }
+  Path& set_owner(UserType user, GroupType group, bool recursive, bool resolve_symlinks) noexcept {
+    uid_t uid = static_cast<uid_t>(-1);
+    gid_t gid = static_cast<gid_t>(-1);
+
+    // resolve user and group from ids, strings or NO_CHANGE (default: -1)
+    this->safe([&user, &uid, &group, &gid] {
+      if (std::holds_alternative<uid_t>(user)) {
+        uid = std::get<uid_t>(user);
+      } else if (std::holds_alternative<std::string>(user)) {
+        const std::string& user_name = std::get<std::string>(user);
+
+        if (!user_name.empty()) {
+          auto* user_entry = getpwnam(user_name.c_str());
+          if (!user_entry) throw std::runtime_error("Unknown user: " + user_name);
+          uid = user_entry->pw_uid;
+        }
+      } else if (std::holds_alternative<NoOwnerChangeType>(user)) {
+        // do nothing
+      } else {
+        throw std::runtime_error("Unknown user type");
+      }
+
+      if (std::holds_alternative<gid_t>(group)) {
+        gid = std::get<gid_t>(group);
+      } else if (std::holds_alternative<std::string>(group)) {
+        const std::string& group_name = std::get<std::string>(group);
+
+        if (!group_name.empty()) {
+          auto* group_entry = getgrnam(group_name.c_str());
+          if (!group_entry) throw std::runtime_error("Unknown group: " + group_name);
+          gid = group_entry->gr_gid;
+        }
+      } else if (std::holds_alternative<NoOwnerChangeType>(group)) {
+        // do nothing
+      } else {
+        throw std::runtime_error("Unknown group type");
+      }
+    });
+
+    // if both user and group are NO_CHANGE, return
+    if (uid == static_cast<uid_t>(-1) && gid == static_cast<gid_t>(-1)) return *this;
+
+    int flags = resolve_symlinks ? 0 : AT_SYMLINK_NOFOLLOW;
+
+    auto apply = [&uid, &gid, &flags](const char* path) { fchownat(AT_FDCWD, path, uid, gid, flags); };
+
+    apply(this->path().c_str());
+
+    if (!recursive) return *this;
+
+    // apply recursively
+
+    fs::directory_options options = resolve_symlinks ? fs::directory_options::follow_directory_symlink : fs::directory_options::none;
+
+    this->safe([this, &apply, &options] {
+      for (const auto& entry : fs::recursive_directory_iterator(this->path(), options)) {
+        apply(entry.path().c_str());
+      }
+    });
+
+    return *this;
+  }
+
+  /*
+   * Set filesystem permissions on the path.
+   *
+   * Notes:
+   * - When applying permissions recursively, do not forget that directories require executable permissions for traversing.
+   * - The symbolic permission string does not support multiple operator groups like "u=rwx,g=rwx,o=rwx".
+   * - The = operator of the symbolic permission string sets any permissions of non-specified targets to zero.
+   */
+  Path& set_permissions(PermissionType permission = 0664, PermissionOptionsType options = Replace, bool recursive = false) noexcept {
+    fs::perms resolved_permissions    = fs::perms::none;
+    fs::perm_options resolved_options = fs::perm_options::replace;
+
+    // resolve permission options from PermissionMode, fs::perm_options or string
+
+    if (std::holds_alternative<PermissionMode>(options)) {
+      switch (std::get<PermissionMode>(options)) {
+        case Replace:
+          resolved_options = fs::perm_options::replace;
+          break;
+        case Add:
+          resolved_options = fs::perm_options::add;
+          break;
+        case Remove:
+          resolved_options = fs::perm_options::remove;
+          break;
+        default:
+          this->spoil(std::runtime_error("Unknown permission mode"));
+          break;
+      }
+    } else if (std::holds_alternative<fs::perm_options>(options)) {
+      resolved_options = std::get<fs::perm_options>(options);
+    } else if (std::holds_alternative<std::string>(options)) {
+      const std::string& option = std::get<std::string>(options);
+      if (option == "replace") {
+        resolved_options = fs::perm_options::replace;
+      } else if (option == "add") {
+        resolved_options = fs::perm_options::add;
+      } else if (option == "remove") {
+        resolved_options = fs::perm_options::remove;
+      }
+    } else {
+      this->spoil(std::runtime_error("Unknown permission options type"));
+    }
+
+    // resolve permission from Status, StatusFlag, fs::perms or string
+
+    if (std::holds_alternative<Status>(permission)) {
+      resolved_permissions = std::get<Status>(permission).fs_perms();
+    } else if (std::holds_alternative<fs::perms>(permission)) {
+      resolved_permissions = std::get<fs::perms>(permission);
+    } else if (std::holds_alternative<int>(permission)) {
+      resolved_permissions = static_cast<fs::perms>(std::get<int>(permission));
+    } else if (std::holds_alternative<std::string>(permission)) {
+      const std::string& permission_string = std::get<std::string>(permission);
+
+      auto parsed          = symbolic_permission_string_to_fs_perms_and_options(permission_string);
+      resolved_permissions = parsed.first;
+      resolved_options     = parsed.second;
+    } else {
+      this->spoil(std::runtime_error("Unknown permission type"));
+    }
+
+    auto apply = [&resolved_permissions, &resolved_options](Path& path) { path.fs_permissions(resolved_permissions, resolved_options); };
+
+    apply(*this);
+
+    if (!recursive) return *this;
+
+    // apply recursively
+
+    this->safe([this, &apply] {
+      for (const auto& entry : fs::recursive_directory_iterator(this->path())) {
+        Path path = Path(entry.path());
+        apply(path);
+        path.raise();
+      }
+    });
+
     return *this;
   }
 

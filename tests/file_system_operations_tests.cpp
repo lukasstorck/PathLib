@@ -1,4 +1,8 @@
 #include <doctest/doctest.h>
+#include <grp.h>
+#include <pwd.h>
+#include <sys/types.h>
+#include <unistd.h>
 
 #include <PathLib/PathLib.hpp>
 #include <filesystem>
@@ -168,13 +172,290 @@ TEST_CASE("rename() overwrites existing") {
   REQUIRE(original_src_path.good());
 }
 
-TEST_CASE("permissions()") {
+TEST_CASE("set_owner() already owned file") {
+  TestEnvironment environment;
+  PathLib::Path file_path(environment.file_in_directory_a);
+
+  // Set by UID only
+  file_path.set_owner(environment.user_uid);
+  REQUIRE(file_path.owner() == environment.user_uid);
+  REQUIRE(file_path.good());
+
+  // Set by UID and GID
+  file_path.set_owner(environment.user_uid, environment.user_gid);
+  REQUIRE(file_path.owner() == environment.user_uid);
+  REQUIRE(file_path.group() == environment.user_gid);
+  REQUIRE(file_path.good());
+}
+
+TEST_CASE("set_owner() by UID/GID") {
+  REQUIRE_ROOT();
+  TestEnvironment environment;
+  PathLib::Path file_path(environment.other_owner_file);
+
+  // Set by UID only
+  file_path.set_owner(environment.user_uid);
+  REQUIRE(file_path.owner() == environment.user_uid);
+  REQUIRE(file_path.group() == environment.other_gid);
+  REQUIRE(file_path.good());
+
+  // Set by UID and GID
+  file_path.set_owner(environment.user_uid, environment.user_gid);
+  REQUIRE(file_path.owner() == environment.user_uid);
+  REQUIRE(file_path.group() == environment.user_gid);
+  REQUIRE(file_path.good());
+}
+
+TEST_CASE("set_owner() group only") {
+  REQUIRE_ROOT();
+  TestEnvironment environment;
+  PathLib::Path file_path(environment.other_owner_file);
+
+  file_path.set_owner(PathLib::NO_CHANGE, environment.user_uid);
+  REQUIRE(file_path.owner() == environment.other_uid);
+  REQUIRE(file_path.group() == environment.user_uid);
+  REQUIRE(file_path.good());
+}
+
+TEST_CASE("set_owner() by username/groupname") {
+  REQUIRE_ROOT();
+  TestEnvironment environment;
+  PathLib::Path file_path(environment.other_owner_file);
+
+  file_path.set_owner(environment.user_name);
+  REQUIRE(file_path.owner() == environment.user_uid);
+  REQUIRE(file_path.group() == environment.other_gid);
+  REQUIRE(file_path.good());
+
+  file_path.set_owner(environment.user_name, environment.user_group_name);
+  REQUIRE(file_path.owner() == environment.user_uid);
+  REQUIRE(file_path.group() == environment.user_gid);
+  REQUIRE(file_path.good());
+}
+
+TEST_CASE("set_owner() recursive on directory") {
+  REQUIRE_ROOT();
+  TestEnvironment environment;
+  PathLib::Path dir_path(environment.nested_directory);
+
+  dir_path.set_owner(environment.user_uid, environment.user_gid, true);
+
+  REQUIRE(dir_path.owner() == environment.user_uid);
+  REQUIRE(dir_path.group() == environment.user_gid);
+  REQUIRE(dir_path.good());
+
+  // Verify ownership recursively
+  for (const auto& entry : std::filesystem::recursive_directory_iterator(dir_path.path())) {
+    PathLib::Path child(entry.path());
+    REQUIRE(child.owner() == environment.user_uid);
+    REQUIRE(child.group() == environment.user_gid);
+  }
+}
+
+TEST_CASE("set_owner() symlink handling - change target") {
+  REQUIRE_ROOT();
+  TestEnvironment environment;
+  PathLib::Path symlink_path(environment.symlink_to_other_owner_file);
+  PathLib::Path custom_owner_file(environment.other_owner_file);
+
+  symlink_path.set_owner(environment.user_uid, environment.user_gid, false, true);
+  CHECK(symlink_path.owner(false) == environment.other_uid);
+  CHECK(symlink_path.group(false) == environment.other_gid);
+  CHECK(custom_owner_file.owner() == environment.user_uid);
+  CHECK(custom_owner_file.group() == environment.user_gid);
+  CHECK(symlink_path.good());
+  CHECK(custom_owner_file.good());
+}
+
+TEST_CASE("set_owner() symlink handling - change symlink") {
+  REQUIRE_ROOT();
+  TestEnvironment environment;
+  PathLib::Path symlink_path(environment.symlink_to_other_owner_file);
+  PathLib::Path custom_owner_file(environment.other_owner_file);
+
+  symlink_path.set_owner(environment.user_uid, environment.user_gid, false, false);
+  CHECK(symlink_path.owner(false) == environment.user_uid);
+  CHECK(symlink_path.group(false) == environment.user_gid);
+  CHECK(custom_owner_file.owner() == environment.other_uid);
+  CHECK(custom_owner_file.group() == environment.other_gid);
+  CHECK(symlink_path.good());
+  CHECK(custom_owner_file.good());
+}
+
+TEST_CASE("set_owner() nonexistent user/group throws") {
+  TestEnvironment environment;
+  PathLib::Path directory_path(environment.directory_a);
+
+  directory_path.set_owner("nonexistentuser", true);
+  REQUIRE_FALSE(directory_path.good());
+  REQUIRE(directory_path.error() == "Unknown user: nonexistentuser");
+
+  directory_path.clear();
+
+  directory_path.set_owner(PathLib::NO_CHANGE, "nonexistentgroup", true);
+  REQUIRE_FALSE(directory_path.good());
+  REQUIRE(directory_path.error() == "Unknown group: nonexistentgroup");
+}
+
+TEST_CASE("set_permissions()") {
   TestEnvironment environment;
   PathLib::Path file(environment.file_in_directory_a);
+
+  file.set_permissions();
+  INFO("file.status(): " << file.status());
+  REQUIRE(file.status().has_all(PathLib::HasOwnerReadWrite | PathLib::HasGroupReadWrite));
+  REQUIRE_FALSE(file.status().has_any(PathLib::HasOtherWrite));
+  REQUIRE(file.good());
+}
+
+TEST_CASE("set_permissions() using PathLib::Status") {
+  TestEnvironment environment;
+  PathLib::Path file(environment.file_in_directory_a);
+
+  PathLib::Status perms = PathLib::HasOwnerReadWrite;
+
+  file.set_permissions(perms);
+  REQUIRE(file.status().has_all(perms));
+  REQUIRE_FALSE(file.status().has_any(PathLib::HasGroupReadWrite));
+  REQUIRE(file.good());
+}
+
+TEST_CASE("set_permissions() using fs::perms") {
+  TestEnvironment environment;
+  PathLib::Path file(environment.file_in_directory_a);
+
   fs::perms perms = fs::perms::owner_read | fs::perms::owner_write;
 
-  file.permissions(perms);
-  REQUIRE(file.status().has_all(PathLib::HasOwnerRead | PathLib::HasOwnerWrite));
-  REQUIRE_FALSE(file.status().has_any(PathLib::HasOwnerExecute));
+  file.set_permissions(perms);
+  REQUIRE(file.status().has_all(PathLib::HasOwnerReadWrite));
+  REQUIRE_FALSE(file.status().has_any(PathLib::HasGroupReadWrite));
   REQUIRE(file.good());
+}
+
+TEST_CASE("set_permissions() using integer numeric mode") {
+  TestEnvironment environment;
+  PathLib::Path file(environment.file_in_directory_a);
+
+  // numeric 600 == owner read/write
+  file.set_permissions(0600);
+  REQUIRE(file.status().has_all(PathLib::HasOwnerReadWrite));
+  REQUIRE_FALSE(file.status().has_any(PathLib::HasGroupReadWrite));
+  REQUIRE(file.good());
+}
+
+TEST_CASE("set_permissions() using symbolic string") {
+  TestEnvironment environment;
+  PathLib::Path file(environment.file_in_directory_a);
+
+  file.set_permissions("u=rw");
+  REQUIRE(file.status().has_all(PathLib::HasOwnerReadWrite));
+  REQUIRE_FALSE(file.status().has_any(PathLib::HasGroupReadWrite));
+  REQUIRE(file.good());
+}
+
+TEST_CASE("set_permissions() using PermissionMode enum") {
+  TestEnvironment environment;
+  PathLib::Path file(environment.file_in_directory_a);
+
+  // replace
+  file.set_permissions(PathLib::HasOwnerReadWrite, PathLib::Replace);
+  REQUIRE(file.status().has_all(PathLib::HasOwnerReadWrite));
+  REQUIRE_FALSE(file.status().has_any(PathLib::HasGroupReadWrite));
+
+  // remove
+  file.set_permissions(PathLib::HasOwnerWrite, PathLib::Remove);
+  REQUIRE(file.status().has_all(PathLib::HasOwnerRead));
+  REQUIRE_FALSE(file.status().has_any(PathLib::HasOwnerWrite));
+
+  // add
+  file.set_permissions(PathLib::HasOwnerWrite, PathLib::Add);
+  REQUIRE(file.status().has_all(PathLib::HasOwnerReadWrite));
+
+  REQUIRE(file.good());
+}
+
+TEST_CASE("set_permissions() using PermissionMode fs::perm_options") {
+  TestEnvironment environment;
+  PathLib::Path file(environment.file_in_directory_a);
+
+  // replace
+  file.set_permissions(PathLib::HasOwnerReadWrite, fs::perm_options::replace);
+  REQUIRE(file.status().has_all(PathLib::HasOwnerReadWrite));
+  REQUIRE_FALSE(file.status().has_any(PathLib::HasGroupReadWrite));
+
+  // remove
+  file.set_permissions(PathLib::HasOwnerWrite, fs::perm_options::remove);
+  REQUIRE(file.status().has_all(PathLib::HasOwnerRead));
+  REQUIRE_FALSE(file.status().has_any(PathLib::HasOwnerWrite));
+
+  // add
+  file.set_permissions(PathLib::HasOwnerWrite, fs::perm_options::add);
+  REQUIRE(file.status().has_all(PathLib::HasOwnerReadWrite));
+
+  REQUIRE(file.good());
+}
+
+TEST_CASE("set_permissions() using PermissionMode string") {
+  TestEnvironment environment;
+  PathLib::Path file(environment.file_in_directory_a);
+
+  // replace
+  file.set_permissions(PathLib::HasOwnerReadWrite, "replace");
+  REQUIRE(file.status().has_all(PathLib::HasOwnerReadWrite));
+  REQUIRE_FALSE(file.status().has_any(PathLib::HasGroupReadWrite));
+
+  // remove
+  file.set_permissions(PathLib::HasOwnerWrite, "remove");
+  REQUIRE(file.status().has_all(PathLib::HasOwnerRead));
+  REQUIRE_FALSE(file.status().has_any(PathLib::HasOwnerWrite));
+
+  // add
+  file.set_permissions(PathLib::HasOwnerWrite, "add");
+  REQUIRE(file.status().has_all(PathLib::HasOwnerReadWrite));
+
+  REQUIRE(file.good());
+}
+
+TEST_CASE("set_permissions() string input overwrites PermissionMode") {
+  TestEnvironment environment;
+  PathLib::Path file(environment.file_in_directory_a);
+
+  // option "add" should be ignored and be overwritten by
+  // symbolic permission string which specifies replace
+  file.set_permissions("u=rw", PathLib::Add);
+
+  REQUIRE(file.status().has_all(PathLib::HasOwnerReadWrite));
+  REQUIRE_FALSE(file.status().has_any(PathLib::HasGroupReadWrite));
+  REQUIRE(file.good());
+}
+
+TEST_CASE("set_permissions() on directory") {
+  TestEnvironment environment;
+  PathLib::Path dir(environment.directory_a);
+
+  PathLib::Status perms = PathLib::HasOwnerAll;
+
+  dir.set_permissions(perms, PathLib::Replace);
+
+  REQUIRE(dir.status().has_all(perms));
+  REQUIRE_FALSE(dir.status().has_any(PathLib::HasGroupReadWrite));
+  REQUIRE(dir.good());
+}
+
+TEST_CASE("set_permissions() recursive on directory") {
+  TestEnvironment environment;
+  PathLib::Path dir(environment.directory_b);
+
+  PathLib::Status perms = PathLib::HasOwnerAll;
+
+  dir.set_permissions(perms, PathLib::Replace, true);
+
+  REQUIRE(dir.status().has_all(perms));
+
+  for (const auto& entry : fs::recursive_directory_iterator(dir.path())) {
+    PathLib::Path child(entry.path());
+    REQUIRE(child.status().has_all(perms));
+    REQUIRE_FALSE(child.status().has_any(PathLib::HasGroupReadWrite));
+    REQUIRE(child.good());
+  }
 }

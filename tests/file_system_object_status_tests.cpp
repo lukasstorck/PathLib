@@ -7,6 +7,40 @@
 
 namespace fs = std::filesystem;
 
+TEST_CASE("owner()") {
+  TestEnvironment environment;
+
+  PathLib::Path path(environment.file_in_directory_a);
+
+  uid_t owner = path.owner();
+
+  REQUIRE(owner == geteuid());
+  REQUIRE(path.good());
+}
+
+TEST_CASE("group()") {
+  TestEnvironment environment;
+
+  PathLib::Path path(environment.file_in_directory_a);
+  gid_t group = path.group();
+
+  REQUIRE(group == getegid());
+  REQUIRE(path.good());
+}
+
+TEST_CASE("owner() and group() of tmp directory") {
+  TestEnvironment environment;
+
+  PathLib::Path path(environment.tmp_directory);
+
+  uid_t owner = path.owner();
+  gid_t group = path.group();
+
+  REQUIRE(owner == environment.root_uid);
+  REQUIRE(group == environment.root_uid);
+  REQUIRE(path.good());
+}
+
 TEST_CASE("status()") {
   TestEnvironment environment;
 
@@ -152,18 +186,122 @@ TEST_CASE("parent_exists()") {
   REQUIRE(deeply_missing.good());
 }
 
-TEST_CASE("is_writable() throws") {
+TEST_CASE("is_readable() basic cases") {
   TestEnvironment environment;
   PathLib::Path file_path(environment.file_in_directory_a);
+  PathLib::Path non_existant_file(environment.non_existant_file);
 
-  file_path.is_writable();
-  REQUIRE_FALSE(file_path.good());
+  REQUIRE(file_path.is_readable());
+  REQUIRE_FALSE(non_existant_file.is_readable());
+
+  REQUIRE(file_path.good());
+  REQUIRE(non_existant_file.good());
 }
 
-TEST_CASE("is_readable() throws") {
+TEST_CASE("is_readable() no permissions") {
   TestEnvironment environment;
   PathLib::Path file_path(environment.file_in_directory_a);
 
-  file_path.is_readable();
-  REQUIRE_FALSE(file_path.good());
+  file_path.set_permissions(fs::perms::none);
+
+  REQUIRE_FALSE(file_path.is_readable());
+  REQUIRE(file_path.good());
+}
+
+TEST_CASE("is_readable() owner read") {
+  TestEnvironment environment;
+  PathLib::Path file_path(environment.file_in_directory_a);
+
+  file_path.set_permissions(fs::perms::owner_read);
+
+  REQUIRE(file_path.is_readable());
+  REQUIRE(file_path.good());
+}
+
+TEST_CASE("is_readable() group read") {
+  REQUIRE_ROOT();
+  TestEnvironment environment;
+  PathLib::Path file_path(environment.other_owner_file);
+  file_path.set_owner(PathLib::NO_CHANGE, geteuid());
+
+  file_path.set_permissions(fs::perms::group_read);
+
+  REQUIRE(file_path.is_readable());
+  REQUIRE(file_path.good());
+}
+
+TEST_CASE("is_readable() other read") {
+  REQUIRE_ROOT();
+  TestEnvironment environment;
+  PathLib::Path file_path(environment.other_owner_file);
+
+  file_path.set_permissions(fs::perms::others_read);
+
+  REQUIRE(file_path.is_readable());
+  REQUIRE(file_path.good());
+}
+
+TEST_CASE("is_readable() owner match does not fall back") {
+  TestEnvironment environment;
+  PathLib::Path file_path(environment.file_in_directory_a);
+
+  file_path.set_permissions(fs::perms::others_read);
+
+  REQUIRE_FALSE(file_path.is_readable());
+}
+
+TEST_CASE("is_readable() non-existing file") {
+  TestEnvironment environment;
+  PathLib::Path non_existant_file(environment.non_existant_file);
+
+  REQUIRE_FALSE(non_existant_file.is_readable());
+  REQUIRE(non_existant_file.good());
+}
+
+TEST_CASE("is_writable() no permissions") {
+  TestEnvironment environment;
+  PathLib::Path file_path(environment.file_in_directory_a);
+
+  file_path.set_permissions(fs::perms::none);
+
+  REQUIRE_FALSE(file_path.is_writable());
+  REQUIRE(file_path.good());
+}
+
+TEST_CASE("is_writable() owner write") {
+  TestEnvironment environment;
+  PathLib::Path file_path(environment.file_in_directory_a);
+
+  REQUIRE(file_path.is_writable());
+  REQUIRE(file_path.good());
+}
+
+TEST_CASE("is_writable() group write") {
+  REQUIRE_ROOT();
+  TestEnvironment environment;
+  PathLib::Path file_path(environment.other_owner_file);
+  file_path.set_owner(PathLib::NO_CHANGE, geteuid());
+
+  file_path.set_permissions(fs::perms::group_write);
+
+  REQUIRE(file_path.is_writable());
+  REQUIRE(file_path.good());
+}
+
+TEST_CASE("is_writable() other write") {
+  REQUIRE_ROOT();
+  TestEnvironment environment;
+  PathLib::Path file_path(environment.other_owner_file);
+
+  file_path.set_permissions(fs::perms::others_write);
+
+  REQUIRE(file_path.is_writable());
+  REQUIRE(file_path.good());
+}
+
+TEST_CASE("is_writable() non-existing file") {
+  TestEnvironment environment;
+  PathLib::Path non_existant_file(environment.non_existant_file);
+
+  REQUIRE(non_existant_file.is_writable());
 }
