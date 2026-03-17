@@ -158,7 +158,6 @@ TEST_CASE("metadata functions match std::filesystem") {
   REQUIRE(p.good());
 
   // --- last_write_time getter & setter ---
-  auto old_time = fs::last_write_time(file);
   auto new_time = fs::file_time_type::clock::now();
   p.fs_last_write_time(new_time);
   REQUIRE(p.good());
