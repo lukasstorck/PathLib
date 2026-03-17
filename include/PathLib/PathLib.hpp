@@ -120,6 +120,142 @@ std::pair<fs::perms, fs::perm_options> symbolic_permission_string_to_fs_perms_an
 }
 }  // namespace
 
+namespace env {
+
+class Options {
+ public:
+  enum OptionsFlag : unsigned {
+    None                      = 0,
+    ResolveTilde              = 1 << 0,
+    TildeWindowsHomeStyle     = 1 << 1,
+    ResolveXDGPaths           = 1 << 2,
+    ResolveDollar             = 1 << 3,
+    ResolveDollarBrace        = 1 << 4,
+    ResolveDollarBraceDefault = 1 << 5,
+    ResolvePercent            = 1 << 6,
+    Default                   = ResolveTilde | ResolveXDGPaths | ResolveDollar | ResolveDollarBrace | ResolveDollarBraceDefault | ResolvePercent,
+  };
+
+  Options() : bits_(std::to_underlying(OptionsFlag::None)) {}
+  Options(OptionsFlag flag) : bits_(std::to_underlying(flag)) {}
+
+  Options operator|(OptionsFlag flag) const {
+    Options result;
+    result.bits_ = this->bits_ | std::to_underlying(flag);
+    return result;
+  }
+
+  Options& operator|=(OptionsFlag flag) {
+    this->bits_ |= std::to_underlying(flag);
+    return *this;
+  }
+
+  bool has(OptionsFlag flag) const { return (this->bits_ & std::to_underlying(flag)) != 0; }
+
+ private:
+  unsigned bits_;
+};
+
+inline std::string get(const std::string& name, const std::string& default_value = {}, Options options = Options::Default) {
+  const char* value = std::getenv(name.c_str());
+  if (value && *value) return value;
+
+  if (!default_value.empty()) return default_value;
+
+  if (options.has(Options::ResolveXDGPaths)) {
+    if (name == "XDG_CONFIG_HOME") return "$HOME/.config";
+    if (name == "XDG_DATA_HOME") return "$HOME/.local/share";
+    if (name == "XDG_CACHE_HOME") return "$HOME/.cache";
+  }
+  return {};
+}
+
+inline std::string resolve(const char* input, size_t max_iterations = 3, Options options = Options::Default) {
+  if (!input) return {};
+
+  std::string current(input);
+
+  // replace ~ with %USERPROFILE% or $HOME
+
+  if (options.has(Options::ResolveTilde) && current.starts_with('~')) {
+    std::string home_variable_name = options.has(Options::TildeWindowsHomeStyle) ? "%%USERPROFILE%%" : "$HOME";
+
+    if (current.size() == 1) {
+      current = home_variable_name;
+    } else if (current[1] == '/' || current[1] == '\\') {
+      current = home_variable_name + current.substr(1);
+    }
+  }
+
+  // iteratively resolve environment variables
+
+  for (size_t i = 0; i < max_iterations; ++i) {
+    std::string next = current;
+
+    size_t start = std::string::npos;
+    size_t end   = std::string::npos;
+
+    std::string var_name;
+    std::string default_value;
+
+    // find a environment variable pattern
+
+    if ((start = next.find("${")) != std::string::npos) {  // pattern: ${VAR:-default}
+      size_t close = next.find('}', start);
+      if (close == std::string::npos) break;
+
+      std::string expr = next.substr(start + 2, close - start - 2);
+      size_t pos       = expr.find(":-");
+
+      if (pos != std::string::npos) {
+        var_name      = expr.substr(0, pos);
+        default_value = expr.substr(pos + 2);
+      } else {
+        var_name = expr;
+      }
+
+      end = close + 1;
+    } else if ((start = next.find('$')) != std::string::npos) {  // pattern: $VAR
+      size_t var_start = start + 1;
+      size_t var_end   = var_start;
+
+      while (var_end < next.size() && (std::isalnum(static_cast<unsigned char>(next[var_end])) || next[var_end] == '_')) {
+        ++var_end;
+      }
+
+      if (var_end == var_start) break;
+
+      var_name = next.substr(var_start, var_end - var_start);
+      end      = var_end;
+    } else if ((start = next.find('%')) != std::string::npos) {  // pattern: %VAR%
+      size_t close = next.find('%', start + 1);
+      if (close == std::string::npos) break;
+
+      var_name = next.substr(start + 1, close - start - 1);
+      end      = close + 1;
+    } else {
+      // nothing left to replace
+      break;
+    }
+
+    // resolve value
+    std::string replacement = get(var_name, default_value, options);
+
+    // rebuild string
+    next.replace(start, end - start, replacement);
+
+    if (next == current) break;
+
+    current = std::move(next);
+  }
+
+  return current;
+}
+inline std::string resolve(const std::string& input, size_t max_iterations = 3, Options options = Options::Default) {
+  return resolve(input.c_str(), max_iterations, options);
+}
+}  // namespace env
+
 namespace PathLib {
 
 enum class PermissionMode : unsigned {
@@ -378,9 +514,22 @@ class Path {
     return *this;
   }
 
-  Path& resolve_environment_variables() noexcept {
-    // TODO
-    this->safe([] { throw std::runtime_error("not implemented"); });
+  Path& resolve_environment_variables(size_t max_per_segment_substitutions = 3, env::Options options = env::Options::Default) noexcept {
+    fs::path resolved_path;
+
+    this->safe([this, &resolved_path, &max_per_segment_substitutions, &options] {
+      for (fs::path::iterator path_segment = this->path_.begin(); path_segment != this->path_.end(); ++path_segment) {
+        std::string resolved_path_segment = env::resolve(path_segment->string(), max_per_segment_substitutions, options);
+
+        if (resolved_path.empty()) {
+          resolved_path = fs::path(resolved_path_segment);
+        } else {
+          resolved_path /= fs::path(resolved_path_segment);
+        }
+      }
+
+      this->path_ = resolved_path;
+    });
     return *this;
   }
 
@@ -394,7 +543,10 @@ class Path {
   [[nodiscard]] Path relative_copy(const Path& base, bool resolve_symlinks) const noexcept { return this->clone().relative(base, resolve_symlinks); }
   [[nodiscard]] Path normalized_copy() const noexcept { return this->clone().normalize(); }
   [[nodiscard]] Path normalized_copy(bool resolve_symlinks) const noexcept { return this->clone().normalize(resolve_symlinks); }
-  [[nodiscard]] Path resolved_environment_variables_copy() const noexcept { return this->clone().resolve_environment_variables(); }
+  [[nodiscard]] Path resolved_environment_variables_copy(size_t max_per_segment_substitutions = 3,
+                                                         env::Options options                 = env::Options::Default) const noexcept {
+    return this->clone().resolve_environment_variables(max_per_segment_substitutions, options);
+  }
 
   // =================================
   // === file system object status ===

@@ -201,18 +201,22 @@ TEST_CASE("normalize() does not strip root separator") {
 }
 
 TEST_CASE("resolve_environment_variables() sets not good on unresolved variable") {
-  PathLib::Path path(fs::path("$HOME/test.txt"));
+  PathLib::Path path("$HOME/test.txt");
 
   path.resolve_environment_variables();
 
-  REQUIRE_FALSE(path.good());
+  REQUIRE(path.string() == std::string(getenv("HOME")) + "/test.txt");
+  REQUIRE(path.good());
 }
 
 TEST_CASE("resolve_environment_variables() non-destructive") {
-  PathLib::Path original_path(fs::path("$HOME/test.txt"));
+  PathLib::Path original_path(fs::path("$HOME"));
 
   PathLib::Path result_path = original_path.resolved_environment_variables_copy();
 
+  REQUIRE(original_path.string() == "$HOME");
+  REQUIRE(result_path.string().starts_with("/home/"));
+
   REQUIRE(original_path.good());
-  REQUIRE_FALSE(result_path.good());
+  REQUIRE(result_path.good());
 }
