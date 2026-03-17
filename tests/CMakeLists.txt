@@ -23,5 +23,6 @@ file(GLOB_RECURSE TEST_SOURCES "*.cpp")
 add_executable(pathlib_tests ${TEST_SOURCES})
 
 target_link_libraries(pathlib_tests PRIVATE PathLib::PathLib doctest::doctest)
+target_compile_options(pathlib_tests PRIVATE -Wall -Wextra)
 
 doctest_discover_tests(pathlib_tests)
