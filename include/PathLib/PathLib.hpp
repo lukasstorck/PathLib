@@ -434,7 +434,6 @@ class Path {
   Path(const fs::path& path, safe_t) noexcept {
     this->safe([this, &path] { this->path_ = path; });
   }
-  Path(std::string_view path_view) : path_(path_view) {}
   Path(const char* path_str) : path_(path_str ? path_str : "") {}
 
   [[nodiscard]] Path clone() const noexcept { return Path(this->path_, safe_tag); }
