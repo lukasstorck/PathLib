@@ -59,17 +59,19 @@ inline std::string get_group_name(gid_t gid) {
 }
 
 struct TestEnvironment {
-  const char* root_directory_name              = "pathlib_test_environment";
-  const char* directory_a_name                 = "dir_a";
-  const char* directory_b_name                 = "dir_b";
-  const char* nested_directory_name            = "nested_dir";
-  const char* non_existant_file_name           = "non_existant_file.txt";
-  const char* file_in_directory_a_name         = "file_a.txt";
-  const char* file_in_directory_b_name         = "file_b.txt";
-  const char* other_owner_file_name            = "other_owner_file.txt";
-  const char* symlink_to_file_a_name           = "symlink_file_a.txt";
-  const char* symlink_to_directory_b_name      = "symlink_directory_b";
-  const char* symlink_to_other_owner_file_name = "symlink_to_other_owner_file.txt";
+  const char* root_directory_name                  = "pathlib_test_environment";
+  const char* directory_a_name                     = "dir_a";
+  const char* directory_b_name                     = "dir_b";
+  const char* nested_directory_name                = "nested_dir";
+  const char* non_existant_file_name               = "non_existant_file.txt";
+  const char* file_in_directory_a_name             = "file_a.txt";
+  const char* file_in_directory_b_name             = "file_b.txt";
+  const char* other_owner_file_name                = "other_owner_file.txt";
+  const char* symlink_to_file_a_name               = "symlink_file_a.txt";
+  const char* symlink_to_directory_b_name          = "symlink_directory_b";
+  const char* symlink_to_other_owner_file_name     = "symlink_to_other_owner_file.txt";
+  const char* home_directory_unix_variable_name    = "HOME";
+  const char* home_directory_windows_variable_name = "USERPROFILE";
 
   const fs::path root_directory;
   const fs::path directory_a;
@@ -85,6 +87,8 @@ struct TestEnvironment {
   const fs::path symlink_to_file_a;
   const fs::path symlink_to_directory_b;
   const fs::path symlink_to_other_owner_file;
+  const fs::path home_directory_unix;
+  const fs::path home_directory_windows;
 
   uid_t user_uid;
   gid_t user_gid;
@@ -117,7 +121,9 @@ struct TestEnvironment {
         other_owner_file(nested_directory / other_owner_file_name),
         symlink_to_file_a(root_directory / symlink_to_file_a_name),
         symlink_to_directory_b(root_directory / symlink_to_directory_b_name),
-        symlink_to_other_owner_file(root_directory / symlink_to_other_owner_file_name) {
+        symlink_to_other_owner_file(root_directory / symlink_to_other_owner_file_name),
+        home_directory_unix(std::string("$") + home_directory_unix_variable_name),
+        home_directory_windows(std::string("%") + home_directory_windows_variable_name + "%") {
     // clean up state, in case previous cleanup failed
     cleanup();
 

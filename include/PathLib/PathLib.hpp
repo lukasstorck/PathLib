@@ -122,6 +122,9 @@ std::pair<fs::perms, fs::perm_options> symbolic_permission_string_to_fs_perms_an
 
 namespace env {
 
+inline const char* HOME_UNIX    = "$HOME";
+inline const char* HOME_WINDOWS = "%%USERPROFILE%%";
+
 class Options {
  public:
   enum OptionsFlag : unsigned {
@@ -175,10 +178,10 @@ inline std::string resolve(const char* input, size_t max_iterations = 3, Options
 
   std::string current(input);
 
-  // replace ~ with %USERPROFILE% or $HOME
+  // replace ~ with HOME_WINDOWS or HOME_UNIX
 
   if (options.has(Options::ResolveTilde) && current.starts_with('~')) {
-    std::string home_variable_name = options.has(Options::TildeWindowsHomeStyle) ? "%%USERPROFILE%%" : "$HOME";
+    std::string home_variable_name = options.has(Options::TildeWindowsHomeStyle) ? HOME_WINDOWS : HOME_UNIX;
 
     if (current.size() == 1) {
       current = home_variable_name;
