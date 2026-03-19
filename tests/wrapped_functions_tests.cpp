@@ -163,6 +163,7 @@ TEST_CASE("metadata functions match std::filesystem") {
   REQUIRE(p.good());
   REQUIRE(fs::last_write_time(file) == new_time);
 
+#ifdef __linux__
   // --- fs_permissions with default replace ---
   p.fs_permissions(fs::perms::owner_read | fs::perms::owner_write);
   REQUIRE(p.good());
@@ -187,6 +188,7 @@ TEST_CASE("metadata functions match std::filesystem") {
   link.fs_read_symlink();
   REQUIRE(link.good());
   REQUIRE(link.string() == file.string());
+#endif
 
   // --- space ---
   PathLib::Path dir(temp_dir);
@@ -231,6 +233,7 @@ TEST_CASE("fs_copy / fs_create_* / fs_create_hard_link / fs_create_symlink") {
   REQUIRE(copy_file.good());
   REQUIRE(fs::exists(copy_file.path()));
 
+#ifdef __linux__
   // --- fs_create_hard_link ---
   PathLib::Path hardlink_file(temp_dir / "file_hardlink.txt");
   hardlink_file.fs_create_hard_link(file);
@@ -249,6 +252,7 @@ TEST_CASE("fs_copy / fs_create_* / fs_create_hard_link / fs_create_symlink") {
   dir_symlink.fs_create_directory_symlink(dir);
   REQUIRE(dir_symlink.good());
   REQUIRE(fs::is_symlink(dir_symlink.path()));
+#endif
 
   // cleanup
   fs::remove_all(temp_dir);
@@ -474,7 +478,7 @@ TEST_CASE("path functions match std::filesystem") {
     PathLib::Path p2("folder/file.txt");
     PathLib::Path p3("folder/other.txt");
 
-    REQUIRE(std::string(p1.fs_c_str()) == p1.string());
+    REQUIRE(std::basic_string<fs::path::value_type>(p1.fs_c_str()) == p1.path().native());
     REQUIRE(p1.fs_native() == p1.path().native());
 
     REQUIRE(p1.fs_compare(p2) == 0);
@@ -487,7 +491,11 @@ TEST_CASE("path functions match std::filesystem") {
   {
     PathLib::Path p1("folder/../folder2/./file.txt");
     p1.fs_lexically_normal();
+#ifdef __linux__
     REQUIRE(p1.string() == "folder2/file.txt");
+#else
+    REQUIRE(p1.string() == "folder2\\file.txt");
+#endif
 
     PathLib::Path base("folder2");
     PathLib::Path p2("folder2/file.txt");
@@ -497,7 +505,11 @@ TEST_CASE("path functions match std::filesystem") {
     PathLib::Path base2(fs::current_path());
     PathLib::Path p3(fs::current_path() / "subdir/file.txt");
     p3.fs_lexically_proximate(base2);
+#ifdef __linux__
     REQUIRE(p3.string() == "subdir/file.txt");
+#else
+    REQUIRE(p3.string() == "subdir\\file.txt");
+#endif
   }
 
   // -----------------------------

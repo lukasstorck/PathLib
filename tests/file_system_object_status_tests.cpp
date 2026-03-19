@@ -7,6 +7,7 @@
 
 namespace fs = std::filesystem;
 
+#ifdef __linux__
 TEST_CASE("owner()") {
   TestEnvironment environment;
 
@@ -40,6 +41,7 @@ TEST_CASE("owner() and group() of tmp directory") {
   REQUIRE(group == environment.root_uid);
   REQUIRE(path.good());
 }
+#endif
 
 TEST_CASE("status()") {
   TestEnvironment environment;
@@ -121,6 +123,7 @@ TEST_CASE("is_directory()") {
   REQUIRE(file_path.good());
 }
 
+#ifdef __linux__
 TEST_CASE("is_symlink()") {
   TestEnvironment environment;
   PathLib::Path symlink_path(environment.symlink_to_file_a);
@@ -135,20 +138,27 @@ TEST_CASE("is_symlink()") {
   REQUIRE(symlink_path.good());
   REQUIRE(file_path.good());
 }
+#endif
 
 TEST_CASE("is_empty()") {
   TestEnvironment environment;
   PathLib::Path file_path(environment.file_in_directory_a);  // created, but empty
   PathLib::Path dir_path(environment.directory_b);           // has file_b inside
+#ifdef __linux__
   PathLib::Path symlink_path(environment.symlink_to_file_a);
+#endif
 
   REQUIRE(file_path.is_empty());
   REQUIRE_FALSE(dir_path.is_empty());
+#ifdef __linux__
   // symlink is not empty when not resolving
   REQUIRE_FALSE(symlink_path.is_empty(false));
+#endif
   REQUIRE(file_path.good());
   REQUIRE(dir_path.good());
+#ifdef __linux__
   REQUIRE(symlink_path.good());
+#endif
 }
 
 TEST_CASE("is_other()") {
@@ -186,6 +196,7 @@ TEST_CASE("parent_exists()") {
   REQUIRE(deeply_missing.good());
 }
 
+#ifdef __linux__
 TEST_CASE("is_readable() basic cases") {
   TestEnvironment environment;
   PathLib::Path file_path(environment.file_in_directory_a);
@@ -305,3 +316,4 @@ TEST_CASE("is_writable() non-existing file") {
 
   REQUIRE(non_existant_file.is_writable());
 }
+#endif

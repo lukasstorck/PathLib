@@ -1,8 +1,12 @@
 #pragma once
 
+#ifdef _WIN32
+// #include <windows.h>
+#else
 #include <grp.h>
 #include <pwd.h>
 #include <unistd.h>
+#endif
 
 #include <filesystem>
 #include <fstream>
@@ -16,6 +20,7 @@
 
 namespace fs = std::filesystem;
 
+#ifdef __linux__
 inline gid_t get_primary_gid(uid_t uid) {
   auto* user_entry = getpwuid(uid);
   if (user_entry == nullptr) throw std::runtime_error("could not find passwd entry for user id " + std::to_string(uid));
@@ -57,6 +62,7 @@ inline std::string get_group_name(gid_t gid) {
   if (group_entry == nullptr) throw std::runtime_error("could not find group entry for group id " + std::to_string(gid));
   return group_entry->gr_name;
 }
+#endif
 
 struct TestEnvironment {
   const char* root_directory_name                  = "pathlib_test_environment";
@@ -90,6 +96,7 @@ struct TestEnvironment {
   const fs::path home_directory_unix;
   const fs::path home_directory_windows;
 
+#ifdef __linux__
   uid_t user_uid;
   gid_t user_gid;
   gid_t user_secondary_gid;
@@ -106,6 +113,7 @@ struct TestEnvironment {
   gid_t other_gid;
   std::string other_name;
   std::string other_group_name;
+#endif
 
   TestEnvironment()
       : root_directory(fs::current_path() / root_directory_name),
@@ -127,20 +135,27 @@ struct TestEnvironment {
     // clean up state, in case previous cleanup failed
     cleanup();
 
+#ifdef __linux__
     setup_ids_and_names();
+#endif
 
     fs::create_directories(nested_directory);
     fs::create_directories(directory_b);
     std::ofstream(file_in_directory_a).close();
     std::ofstream(file_in_directory_b).close();
     std::ofstream(other_owner_file).close();
+
+#ifdef __linux__
     fs::create_symlink(file_in_directory_a, symlink_to_file_a);
     fs::create_directory_symlink(directory_b, symlink_to_directory_b);
     fs::create_symlink(other_owner_file, symlink_to_other_owner_file);
+#endif
 
+#ifdef __linux__
     // change group of custom owner files
     chown(other_owner_file.c_str(), other_uid, other_gid);
     lchown(symlink_to_other_owner_file.c_str(), other_uid, other_gid);
+#endif
   }
 
   ~TestEnvironment() { cleanup(); }
@@ -148,6 +163,7 @@ struct TestEnvironment {
   TestEnvironment(const TestEnvironment&)            = delete;
   TestEnvironment& operator=(const TestEnvironment&) = delete;
 
+#ifdef __linux__
   void setup_ids_and_names() {
     const char* ENV_SUDO_UID = getenv("SUDO_UID");
 
@@ -166,6 +182,7 @@ struct TestEnvironment {
     other_name       = get_user_name(other_uid);
     other_group_name = get_group_name(other_gid);
   }
+#endif
 
   void cleanup() noexcept {
     std::error_code ec;

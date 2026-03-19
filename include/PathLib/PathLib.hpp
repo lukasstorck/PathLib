@@ -1,10 +1,14 @@
 #pragma once
 
+#ifdef _WIN32
+// #include <windows.h>
+#else
 #include <fcntl.h>
 #include <grp.h>
 #include <pwd.h>
 #include <sys/stat.h>
 #include <unistd.h>
+#endif
 
 #include <bitset>
 #include <cstring>
@@ -17,6 +21,7 @@
 namespace fs = std::filesystem;
 
 namespace {
+#ifdef __linux__
 bool is_process_file_group_owner(gid_t file_group_id, gid_t process_group_id) noexcept {
   // direct group id match
   bool group_id_matches = file_group_id == process_group_id;
@@ -35,6 +40,7 @@ bool is_process_file_group_owner(gid_t file_group_id, gid_t process_group_id) no
 
   return group_id_matches;
 }
+#endif
 
 std::pair<fs::perms, fs::perm_options> symbolic_permission_string_to_fs_perms_and_options(const std::string& permission) {
   size_t i = 0;
@@ -416,8 +422,10 @@ inline constexpr PermissionMode Remove  = PermissionMode::Remove;
 struct NoOwnerChangeType {};
 inline constexpr NoOwnerChangeType NO_CHANGE{};
 
+#ifdef __linux__
 using UserType  = std::variant<uid_t, std::string, NoOwnerChangeType>;
 using GroupType = std::variant<gid_t, std::string, NoOwnerChangeType>;
+#endif
 
 using PermissionType        = std::variant<Status, fs::perms, int, std::string>;
 using PermissionOptionsType = std::variant<PermissionMode, fs::perm_options, std::string>;
@@ -554,6 +562,8 @@ class Path {
   // === file system object status ===
   // =================================
 
+#ifdef __linux__
+
   uid_t owner() noexcept { return this->owner(this->symlink_mode.has(SymlinkMode::FollowForStatus)); }
   uid_t owner(bool resolve_symlinks) noexcept {
     struct stat file_status;
@@ -579,6 +589,7 @@ class Path {
 
     return file_status.st_gid;
   }
+#endif
 
   Status status() noexcept { return this->status(this->symlink_mode.has(SymlinkMode::FollowForStatus)); }
   Status status(bool resolve_symlinks) noexcept {
@@ -622,6 +633,7 @@ class Path {
         break;
     }
 
+#ifdef __linux__
     fs::perms permissions = file_status.permissions();
 
     auto apply_permission_flag_if_present = [&permissions, &flags](fs::perms permission, Status flag) {
@@ -640,6 +652,7 @@ class Path {
     apply_permission_flag_if_present(fs::perms::set_uid, IsUidBitSet);
     apply_permission_flag_if_present(fs::perms::set_gid, IsGidBitSet);
     apply_permission_flag_if_present(fs::perms::sticky_bit, IsStickyBitSet);
+#endif
 
     Path parent        = this->parent();
     bool parent_exists = parent.fs_exists();
@@ -699,6 +712,7 @@ class Path {
   bool is_symlink(bool resolve_symlinks) noexcept { return this->check(IsSymlink, resolve_symlinks); }
   bool is_unknown(bool resolve_symlinks) noexcept { return this->check(IsUnknown, resolve_symlinks); }
 
+#ifdef __linux__
   bool is_readable() noexcept { return this->is_readable(this->symlink_mode.has(SymlinkMode::FollowForStatus)); }
   bool is_readable(bool resolve_symlinks) noexcept {
     Status status = this->status(resolve_symlinks);
@@ -749,6 +763,7 @@ class Path {
     // check file other permission
     return status.has_all(HasOtherWrite);
   }
+#endif
 
   bool is_root() noexcept {
     bool result = false;
@@ -803,6 +818,7 @@ class Path {
     return *this;
   }
 
+#ifdef __linux__
   Path& create_symlink(const Path& destination) noexcept { return this->create_symlink(destination, false); }
 
   Path& create_symlink(const Path& destination, bool force_directory) noexcept {
@@ -820,6 +836,7 @@ class Path {
 
     return *this;
   }
+#endif
 
   Path& remove() noexcept { return this->remove(false); }
   Path& remove(bool recursive) noexcept {
@@ -844,6 +861,7 @@ class Path {
     return *this;
   }
 
+#ifdef __linux__
   Path& set_owner(UserType user = NO_CHANGE, GroupType group = NO_CHANGE, bool recursive = false) noexcept {
     return this->set_owner(user, group, recursive, this->symlink_mode.has(SymlinkMode::FollowForStatus));
   }
@@ -909,6 +927,7 @@ class Path {
 
     return *this;
   }
+#endif
 
   /*
    * Set filesystem permissions on the path.

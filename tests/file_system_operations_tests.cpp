@@ -1,8 +1,13 @@
 #include <doctest/doctest.h>
+
+#ifdef _WIN32
+// #include <windows.h>
+#else
 #include <grp.h>
 #include <pwd.h>
 #include <sys/types.h>
 #include <unistd.h>
+#endif
 
 #include <PathLib/PathLib.hpp>
 #include <filesystem>
@@ -45,6 +50,7 @@ TEST_CASE("create_directory()") {
   REQUIRE(dir.good());
 }
 
+#ifdef __linux__
 TEST_CASE("create_directory() with permissions") {
   TestEnvironment environment;
   PathLib::Path dir(environment.root_directory / "new_dir_with_perms");
@@ -56,6 +62,7 @@ TEST_CASE("create_directory() with permissions") {
   REQUIRE(dir.status().has_all(PathLib::HasOwnerRead | PathLib::HasOwnerWrite | PathLib::HasOwnerExecute));
   REQUIRE(dir.good());
 }
+#endif
 
 TEST_CASE("create_parent()") {
   TestEnvironment environment;
@@ -76,6 +83,7 @@ TEST_CASE("create_hard_link()") {
   REQUIRE(hard_link.good());
 }
 
+#ifdef __linux__
 TEST_CASE("create_symlink() to file") {
   TestEnvironment environment;
   PathLib::Path symlink(environment.root_directory / "new_symlink_to_file_a.txt");
@@ -107,6 +115,7 @@ TEST_CASE("create_symlink() overwrites existing") {
   REQUIRE(symlink.is_symlink(false));
   REQUIRE(symlink.good());
 }
+#endif
 
 TEST_CASE("remove() file") {
   TestEnvironment environment;
@@ -172,6 +181,7 @@ TEST_CASE("rename() overwrites existing") {
   REQUIRE(original_src_path.good());
 }
 
+#ifdef __linux__
 TEST_CASE("set_owner() already owned file") {
   TestEnvironment environment;
   PathLib::Path file_path(environment.file_in_directory_a);
@@ -296,7 +306,9 @@ TEST_CASE("set_owner() nonexistent user/group throws") {
   REQUIRE_FALSE(directory_path.good());
   REQUIRE(directory_path.error() == "Unknown group: nonexistentgroup");
 }
+#endif
 
+#ifdef __linux__
 TEST_CASE("set_permissions()") {
   TestEnvironment environment;
   PathLib::Path file(environment.file_in_directory_a);
@@ -459,3 +471,4 @@ TEST_CASE("set_permissions() recursive on directory") {
     REQUIRE(child.good());
   }
 }
+#endif

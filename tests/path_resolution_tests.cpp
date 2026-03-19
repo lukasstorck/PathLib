@@ -48,6 +48,7 @@ TEST_CASE("absolute() non-destructive") {
   REQUIRE(result_from_absolute_path.good());
 }
 
+#ifdef __linux__
 TEST_CASE("absolute() symlink with and without resolve") {
   TestEnvironment environment;
   PathLib::Path path(environment.symlink_to_file_a);
@@ -61,6 +62,7 @@ TEST_CASE("absolute() symlink with and without resolve") {
   REQUIRE(unresolved_path.good());
   REQUIRE(resolved_path.good());
 }
+#endif
 
 TEST_CASE("relative() from absolute path") {
   TestEnvironment environment;
@@ -125,6 +127,7 @@ TEST_CASE("relative() non-destructive") {
   REQUIRE(result_path.good());
 }
 
+#ifdef __linux__
 TEST_CASE("relative() symlink with and without resolve") {
   TestEnvironment environment;
   const PathLib::Path directory_a_path(environment.directory_a);
@@ -139,6 +142,7 @@ TEST_CASE("relative() symlink with and without resolve") {
   REQUIRE(unresolved_path.good());
   REQUIRE(resolved_path.good());
 }
+#endif
 
 TEST_CASE("normalize() clean and messy path") {
   TestEnvironment environment;
@@ -172,6 +176,7 @@ TEST_CASE("normalize() non-destructive") {
   REQUIRE(result_path.good());
 }
 
+#ifdef __linux__
 TEST_CASE("normalize() symlink with and without resolve") {
   TestEnvironment environment;
   PathLib::Path path(environment.symlink_to_file_a / "..");
@@ -184,6 +189,7 @@ TEST_CASE("normalize() symlink with and without resolve") {
   REQUIRE(unresolved_path.good());
   REQUIRE(resolved_path.good());
 }
+#endif
 
 TEST_CASE("normalize() does not strip root separator") {
   fs::path unix_("/"), windows("C:\\");
@@ -228,34 +234,63 @@ TEST_CASE("resolve_environment_variables() home directory") {
 
 TEST_CASE("resolve_environment_variables() with path") {
   const char* env_var_name = "PATHLIB_TEST";
-  std::string value        = "tmp/pathlib_test";
+#ifdef __linux__
+  std::string value = "tmp/pathlib_test";
+#else
+  std::string value = "tmp\\pathlib_test";
+#endif
+
+#ifdef __linux__
   setenv(env_var_name, value.c_str(), 1);
+#else
+  _putenv_s(env_var_name, value.c_str());
+#endif
 
   // at start of path
   {
     PathLib::Path path(std::string("$") + env_var_name + "/file.txt");
     path.resolve_environment_variables();
+#ifdef __linux__
     REQUIRE(path.string() == value + "/file.txt");
+#else
+    REQUIRE(path.string() == value + "\\file.txt");
+#endif
     REQUIRE(path.good());
   }
 
   // in middle of path
   {
+#ifdef __linux__
     PathLib::Path path(std::string("/root/$") + env_var_name + "/file.txt");
     path.resolve_environment_variables();
     REQUIRE(path.string() == "/root/" + value + "/file.txt");
+#else
+    PathLib::Path path(std::string("\\root\\$") + env_var_name + "\\file.txt");
+    path.resolve_environment_variables();
+    REQUIRE(path.string() == "\\root\\" + value + "\\file.txt");
+#endif
     REQUIRE(path.good());
   }
 
   // multiple variables in path
   {
+#ifdef __linux__
     PathLib::Path path(std::string("$") + env_var_name + "/sub/$" + env_var_name);
     path.resolve_environment_variables();
     REQUIRE(path.string() == value + "/sub/" + value);
+#else
+    PathLib::Path path(std::string("$") + env_var_name + "\\sub\\$" + env_var_name);
+    path.resolve_environment_variables();
+    REQUIRE(path.string() == value + "\\sub\\" + value);
+#endif
     REQUIRE(path.good());
   }
 
+#ifdef __linux__
   unsetenv(env_var_name);
+#else
+  _putenv_s(env_var_name, "");
+#endif
 }
 
 TEST_CASE("resolve_environment_variables() Linux XDG") {
@@ -287,7 +322,12 @@ TEST_CASE("resolve_environment_variables() Linux XDG") {
 TEST_CASE("resolve_environment_variables() variable patterns") {
   const char* env_var_name  = "PATHLIB_TEST";
   const char* env_var_value = "pathlib_test_value";
+
+#ifdef __linux__
   setenv(env_var_name, env_var_value, 1);
+#else
+  _putenv_s(env_var_name, env_var_value);
+#endif
 
   // dollar brackets
   {
@@ -329,14 +369,22 @@ TEST_CASE("resolve_environment_variables() variable patterns") {
     REQUIRE(path.good());
   }
 
+#ifdef __linux__
   unsetenv(env_var_name);
+#else
+  _putenv_s(env_var_name, "");
+#endif
 }
 
 TEST_CASE("resolve_environment_variables() recursion") {
   const char* env_var_name  = "PATHLIB_TEST";
   const char* env_var_value = "$PATHLIB_TEST$PATHLIB_TEST";
 
+#ifdef __linux__
   setenv(env_var_name, env_var_value, 1);
+#else
+  _putenv_s(env_var_name, env_var_value);
+#endif
 
   std::string pattern = std::string("$") + env_var_name;
   PathLib::Path path(pattern.c_str());
@@ -346,9 +394,15 @@ TEST_CASE("resolve_environment_variables() recursion") {
 }
 
 TEST_CASE("resolve_environment_variables() variable boundary detection") {
+#ifdef __linux__
   setenv("VAR", "X", 1);
   setenv("VAR_1", "Y", 1);
   setenv("VAR2", "Z", 1);
+#else
+  _putenv_s("VAR", "X");
+  _putenv_s("VAR_1", "Y");
+  _putenv_s("VAR2", "Z");
+#endif
 
   // underscore is valid
   {
@@ -392,15 +446,26 @@ TEST_CASE("resolve_environment_variables() variable boundary detection") {
     REQUIRE(path.string() == "X_suffix");
   }
 
+#ifdef __linux__
   unsetenv("VAR");
   unsetenv("VAR_1");
   unsetenv("VAR2");
+#else
+  _putenv_s("VAR", "");
+  _putenv_s("VAR_1", "");
+  _putenv_s("VAR2", "");
+#endif
 }
 
 TEST_CASE("resolve_environment_variables() non-destructive") {
   const char* env_var_name  = "PATHLIB_TEST";
   const char* env_var_value = "pathlib_test_value";
+
+#ifdef __linux__
   setenv(env_var_name, env_var_value, 1);
+#else
+  _putenv_s(env_var_name, env_var_value);
+#endif
 
   std::string pattern = std::string("$") + env_var_name;
   PathLib::Path original_path(pattern.c_str());

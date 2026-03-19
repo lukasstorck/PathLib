@@ -2,10 +2,25 @@
   "configurations": [
     {
       "name": "Linux",
-      "includePath": ["${workspaceFolder}/**"],
+      "includePath": [
+        "${workspaceFolder}/**"
+      ],
       "compileCommands": "${workspaceFolder}/build/compile_commands.json",
       "defines": [],
       "compilerPath": "/usr/bin/g++",
+      "cStandard": "c23",
+      "cppStandard": "c++23",
+      "intelliSenseMode": "linux-gcc-x64",
+      "configurationProvider": "ms-vscode.cmake-tools"
+    },
+    {
+      "name": "Win32",
+      "includePath": [
+        "${workspaceFolder}/**"
+      ],
+      "compileCommands": "${workspaceFolder}/build/compile_commands.json",
+      "defines": [],
+      "compilerPath": "%PROGRAMFILES%/LLVM/bin/clang.exe",
       "cStandard": "c23",
       "cppStandard": "c++23",
       "intelliSenseMode": "linux-gcc-x64",
