@@ -172,9 +172,13 @@ inline std::string get(const std::string& name, const std::string& default_value
   if (!default_value.empty()) return default_value;
 
   if (options.has(Options::ResolveXDGPaths)) {
-    if (name == "XDG_CONFIG_HOME") return "$HOME/.config";
-    if (name == "XDG_DATA_HOME") return "$HOME/.local/share";
     if (name == "XDG_CACHE_HOME") return "$HOME/.cache";
+    if (name == "XDG_CONFIG_DIRS") return "/etc/xdg";
+    if (name == "XDG_CONFIG_HOME") return "$HOME/.config";
+    if (name == "XDG_DATA_DIRS") return "/usr/local/share:/usr/share";
+    if (name == "XDG_DATA_HOME") return "$HOME/.local/share";
+    if (name == "XDG_RUNTIME_DIR") return "/run/user/" + std::to_string(getuid());
+    if (name == "XDG_STATE_HOME") return "$HOME/.local/state";
   }
   return {};
 }

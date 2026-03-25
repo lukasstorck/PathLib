@@ -295,26 +295,58 @@ TEST_CASE("resolve_environment_variables() with path") {
 
 TEST_CASE("resolve_environment_variables() Linux XDG") {
 #ifndef _WIN32
-  unsetenv("XDG_CONFIG_HOME");
-  unsetenv("XDG_DATA_HOME");
   unsetenv("XDG_CACHE_HOME");
+  unsetenv("XDG_CONFIG_DIRS");
+  unsetenv("XDG_CONFIG_HOME");
+  unsetenv("XDG_DATA_DIRS");
+  unsetenv("XDG_DATA_HOME");
+  unsetenv("XDG_RUNTIME_DIR");
+  unsetenv("XDG_STATE_HOME");
+
+  setenv("HOME", "/home/testuser", 1);
 
   {
     PathLib::Path path("$XDG_CONFIG_HOME/test");
-    path.resolve_environment_variables(1);
-    REQUIRE(path.string() == std::string("$HOME/.config/test"));
+    path.resolve_environment_variables();
+    CHECK(path.string() == "/home/testuser/.config/test");
   }
 
   {
     PathLib::Path path("$XDG_DATA_HOME/test");
-    path.resolve_environment_variables(1);
-    REQUIRE(path.string() == std::string("$HOME/.local/share/test"));
+    path.resolve_environment_variables();
+    CHECK(path.string() == "/home/testuser/.local/share/test");
   }
 
   {
     PathLib::Path path("$XDG_CACHE_HOME/test");
-    path.resolve_environment_variables(1);
-    REQUIRE(path.string() == std::string("$HOME/.cache/test"));
+    path.resolve_environment_variables();
+    CHECK(path.string() == "/home/testuser/.cache/test");
+  }
+
+  {
+    PathLib::Path path("$XDG_STATE_HOME/test");
+    path.resolve_environment_variables();
+    CHECK(path.string() == "/home/testuser/.local/state/test");
+  }
+
+  {
+    PathLib::Path path("$XDG_CONFIG_DIRS/test");
+    path.resolve_environment_variables();
+    CHECK(path.string() == "/etc/xdg/test");
+  }
+
+  {
+    PathLib::Path path("$XDG_DATA_DIRS/test");
+    path.resolve_environment_variables();
+    CHECK(path.string() == "/usr/local/share:/usr/share/test");
+  }
+
+  {
+    PathLib::Path path("$XDG_RUNTIME_DIR/test");
+    path.resolve_environment_variables();
+
+    uid_t uid = getuid();
+    CHECK(path.string() == "/run/user/" + std::to_string(uid) + "/test");
   }
 #endif
 }
