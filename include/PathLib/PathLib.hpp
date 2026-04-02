@@ -11,6 +11,7 @@
 #endif
 
 #include <bitset>
+#include <cassert>
 #include <cstring>
 #include <filesystem>
 #include <fstream>
@@ -135,18 +136,19 @@ inline const char* HOME_WINDOWS = "%USERPROFILE%";
 class Options {
  public:
   enum OptionsFlag : unsigned {
-    None                      = 0,
-    ResolveTilde              = 1 << 0,
-    TildeWindowsHomeStyle     = 1 << 1,
-    ResolveXDGPaths           = 1 << 2,
-    ResolveDollar             = 1 << 3,
-    ResolveDollarBrace        = 1 << 4,
-    ResolveDollarBraceDefault = 1 << 5,
-    ResolvePercent            = 1 << 6,
-    // AllowLowerCaseInVariableNames    = 1 << 7, // TODO: implement, currently allowed
-    // AllowNumericStartInVariableNames = 1 << 8, // TODO: implement, currently allowed
-    Unescape = 1 << 9,
-    Default  = ResolveTilde | ResolveXDGPaths | ResolveDollar | ResolveDollarBrace | ResolveDollarBraceDefault | ResolvePercent | Unescape,
+    None                             = 0,
+    ResolveTilde                     = 1 << 0,
+    TildeWindowsHomeStyle            = 1 << 1,
+    ResolveXDGPaths                  = 1 << 2,
+    ResolveDollar                    = 1 << 3,
+    ResolveDollarBrace               = 1 << 4,
+    ResolveDollarBraceDefault        = 1 << 5,
+    ResolvePercent                   = 1 << 6,
+    AllowLowerCaseInVariableNames    = 1 << 7,
+    AllowNumericStartInVariableNames = 1 << 8,
+    Unescape                         = 1 << 9,
+    Default = ResolveTilde | ResolveXDGPaths | ResolveDollar | ResolveDollarBrace | ResolveDollarBraceDefault | ResolvePercent | AllowLowerCaseInVariableNames |
+              Unescape,
   };
 
   Options() : bits_(std::to_underlying(OptionsFlag::None)) {}
@@ -233,6 +235,16 @@ inline std::string unescape(const char* input) {
   return result;
 }
 
+inline bool is_valid_variable_name(char character, Options options = Options::Default) {
+  if (std::islower(static_cast<unsigned char>(character)) && !options.has(Options::AllowLowerCaseInVariableNames)) return false;
+  return std::isalnum(static_cast<unsigned char>(character)) || character == '_';
+}
+
+inline bool is_valid_variable_start(char character, Options options = Options::Default) {
+  if (std::isdigit(static_cast<unsigned char>(character)) && !options.has(Options::AllowNumericStartInVariableNames)) return false;
+  return is_valid_variable_name(character, options);
+}
+
 inline std::string resolve(const char* input, size_t max_iterations = 3, Options options = Options::Default) {
   if (!input) return {};
 
@@ -250,12 +262,15 @@ inline std::string resolve(const char* input, size_t max_iterations = 3, Options
 
   for (size_t iter = 0; iter < max_iterations; ++iter) {
     enum class State {
-      LookingForAnyPatternStart,
-      DollarFound,
-      LookingForPlainVariableEnd,
-      LookingForBraceVariableEndOrDefaultStart,
-      LookingForBraceVariableDefaultEnd,
-      LookingForPercentVariableEnd,
+      LookingForAnyPatternStart,          // -> escape sequence, dollar, percent or skip
+      DollarFound,                        // -> plain, brace or back to LookingForAnyPatternStart
+      LookingForPlainVariableStart,       // handle plain first character
+      LookingForPlainVariableEnd,         // handle plain subsequent characters
+      LookingForBraceVariableStart,       // handle brace first character
+      LookingForBraceVariableEnd,         // handle brace subsequent characters and default parameter separator
+      LookingForBraceVariableDefaultEnd,  // handle default parameter
+      LookingForPercentVariableStart,     // handle percent first character
+      LookingForPercentVariableEnd,       // handle percent subsequent characters
       PatternCompleted,
     };
 
@@ -297,7 +312,7 @@ inline std::string resolve(const char* input, size_t max_iterations = 3, Options
             continue;
           } else if (options.has(Options::ResolvePercent) && current_char == '%') {
             pattern_start = i;
-            state         = State::LookingForPercentVariableEnd;
+            state         = State::LookingForPercentVariableStart;
             i++;
             continue;
           } else {
@@ -308,31 +323,63 @@ inline std::string resolve(const char* input, size_t max_iterations = 3, Options
 
         case State::DollarFound: {
           if ((options.has(Options::ResolveDollarBrace) || options.has(Options::ResolveDollarBraceDefault)) && current_char == '{') {
-            state = State::LookingForBraceVariableEndOrDefaultStart;
+            state = State::LookingForBraceVariableStart;
             i++;
             continue;
-          } else if (options.has(Options::ResolveDollar) && (std::isalpha(static_cast<unsigned char>(current_char)) || current_char == '_')) {
-            // valid variable name character
-            state = State::LookingForPlainVariableEnd;
-            i++;
+          } else if (options.has(Options::ResolveDollar)) {
+            // potential plain variable, is checked or rejected in next state
+            // note: don't increment
+            state = State::LookingForPlainVariableStart;
             continue;
           } else {
-            // current character is not an opening brace or a valid variable name start
+            // current character is not an opening brace and plain variable resolution is disabled
             state = State::LookingForAnyPatternStart;
             continue;
           }
         }
 
-        case State::LookingForBraceVariableEndOrDefaultStart: {
-          if (options.has(Options::ResolveDollarBraceDefault) && current_char == ':' && i + 2 < total_length && current_string[i + 1] == '-') {
-            // found default value delimiter ":-" plus at least one more character
-            // after that for closing bracket (i + 2 < total_length)
-            variable_start              = pattern_start + 2;
-            variable_end                = i;
-            default_parameter_separator = i;
+        case State::LookingForPlainVariableStart: {
+          if (is_valid_variable_start(current_char, options)) {
+            state = State::LookingForPlainVariableEnd;
+            i++;
+            continue;
+          } else {
+            // current character is not a valid variable name start character
+            state = State::LookingForAnyPatternStart;
+            continue;
+          }
+        }
 
-            state = State::LookingForBraceVariableDefaultEnd;
-            i += 2;
+        case State::LookingForPlainVariableEnd: {
+          if (is_valid_variable_name(current_char, options)) {
+            i++;
+            continue;
+          } else {
+            // non variable name character -> end variable name
+            pattern_end    = i;
+            variable_start = pattern_start + 1;
+            variable_end   = i;
+
+            state = State::PatternCompleted;
+            continue;
+          }
+        }
+
+        case State::LookingForBraceVariableStart: {
+          if (is_valid_variable_start(current_char, options)) {
+            state = State::LookingForBraceVariableEnd;
+            i++;
+            continue;
+          } else {
+            // current character is not a valid variable name start character
+            state = State::LookingForAnyPatternStart;
+            continue;
+          }
+        }
+
+        case State::LookingForBraceVariableEnd: {
+          if (options.has(Options::ResolveDollarBrace) && is_valid_variable_name(current_char, options)) {
+            i++;
             continue;
           } else if (options.has(Options::ResolveDollarBrace) && current_char == '}') {
             pattern_end    = i + 1;
@@ -341,12 +388,17 @@ inline std::string resolve(const char* input, size_t max_iterations = 3, Options
 
             state = State::PatternCompleted;
             continue;
-          } else if (options.has(Options::ResolveDollarBrace) && (std::isalpha(static_cast<unsigned char>(current_char)) || current_char == '_')) {
-            // valid variable name character
-            i++;
+          } else if (options.has(Options::ResolveDollarBraceDefault) && current_char == ':' && i + 1 < total_length && current_string[i + 1] == '-') {
+            // found default value delimiter ":-"
+            variable_start              = pattern_start + 2;
+            variable_end                = i;
+            default_parameter_separator = i;
+
+            state = State::LookingForBraceVariableDefaultEnd;
+            i += 2;
             continue;
           } else {
-            // current character is not a closing brace, colon or a valid variable name character
+            // current character is not a valid variable name character, a closing brace or colon
             state = State::LookingForAnyPatternStart;
             continue;
           }
@@ -371,23 +423,23 @@ inline std::string resolve(const char* input, size_t max_iterations = 3, Options
           }
         }
 
-        case State::LookingForPlainVariableEnd: {
-          if (std::isalnum(static_cast<unsigned char>(current_char)) || current_char == '_') {
+        case State::LookingForPercentVariableStart: {
+          if (is_valid_variable_start(current_char, options)) {
+            state = State::LookingForPercentVariableEnd;
             i++;
             continue;
           } else {
-            // non variable name character: end variable name
-            pattern_end    = i;
-            variable_start = pattern_start + 1;
-            variable_end   = i;
-
-            state = State::PatternCompleted;
+            // current character is not a valid variable name start character
+            state = State::LookingForAnyPatternStart;
             continue;
           }
         }
 
         case State::LookingForPercentVariableEnd: {
-          if (current_char == '%') {
+          if (is_valid_variable_name(current_char, options)) {
+            i++;
+            continue;
+          } else if (current_char == '%') {
             pattern_end    = i + 1;
             variable_start = pattern_start + 1;
             variable_end   = i;
@@ -395,7 +447,8 @@ inline std::string resolve(const char* input, size_t max_iterations = 3, Options
             state = State::PatternCompleted;
             continue;
           } else {
-            i++;
+            // current character is not a valid variable name character or a closing percent
+            state = State::LookingForAnyPatternStart;
             continue;
           }
         }
@@ -405,15 +458,10 @@ inline std::string resolve(const char* input, size_t max_iterations = 3, Options
     }
 
     if (state != State::PatternCompleted) break;
+    assert(variable_start != std::string::npos && variable_end != std::string::npos);
 
-    std::string variable_name;
+    const std::string variable_name = current_string.substr(variable_start, variable_end - variable_start);
     std::string default_value;
-
-    if (state == State::PatternCompleted && variable_start != std::string::npos && variable_end != std::string::npos) {
-      variable_name = current_string.substr(variable_start, variable_end - variable_start);
-    } else {
-      variable_name.clear();
-    }
 
     if (default_value_start != std::string::npos && default_value_end != std::string::npos) {
       default_value = current_string.substr(default_value_start, default_value_end - default_value_start);
