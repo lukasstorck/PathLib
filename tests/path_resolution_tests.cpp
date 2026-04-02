@@ -7,6 +7,84 @@
 
 namespace fs = std::filesystem;
 
+TEST_CASE("env::escape and env::unescape") {
+  // escape adds prefix to special characters
+  CHECK(env::escape("$VAR") == "\\$VAR");
+  CHECK(env::escape("%VAR%") == "%%VAR%%");
+  CHECK(env::escape("\\path") == "\\\\path");
+  CHECK(env::escape("${VAR}") == "\\$\\{VAR\\}");
+  CHECK(env::escape("plain") == "plain");
+  CHECK(env::escape("") == "");
+  CHECK(env::escape(nullptr) == "");
+
+  // unescape reverses escape
+  CHECK(env::unescape("\\$VAR") == "$VAR");
+  CHECK(env::unescape("%%VAR%%") == "%VAR%");
+  CHECK(env::unescape("\\\\path") == "\\path");
+  CHECK(env::unescape("\\$\\{VAR\\}") == "${VAR}");
+  CHECK(env::unescape("plain") == "plain");
+  CHECK(env::unescape("") == "");
+  CHECK(env::unescape(nullptr) == "");
+
+  // unescape(escape(x)) == x for arbitrary strings
+  CHECK(env::unescape(env::escape("$HOME/.config").c_str()) == "$HOME/.config");
+  CHECK(env::unescape(env::escape("%USERPROFILE%\\dir").c_str()) == "%USERPROFILE%\\dir");
+  CHECK(env::unescape(env::escape("no specials").c_str()) == "no specials");
+
+  // unescape does not strip unknown escape sequences
+  CHECK(env::unescape("\\n") == "\\n");  // \n is not a recognised escape
+  CHECK(env::unescape("\\%") == "\\%");  // \% is not a recognised escape
+}
+
+TEST_CASE("env::resolve options") {
+  size_t max_iterations = 3;
+
+  // ResolveDollar disabled: $VAR is left as-is
+  {
+    env::Options options = env::Options::ResolveDollarBrace | env::Options::ResolvePercent | env::Options::Unescape;
+    CHECK(env::resolve("$HOME", max_iterations, options) == "$HOME");
+  }
+
+  // ResolveDollarBrace disabled: ${VAR} is left as-is
+  {
+    env::Options options = env::Options::ResolveDollar | env::Options::ResolvePercent | env::Options::Unescape;
+    CHECK(env::resolve("${HOME}", max_iterations, options) == "${HOME}");
+  }
+
+  // ResolveDollarBraceDefault disabled: ${VAR:-default} is left as-is
+  {
+    env::Options options = env::Options::ResolveDollar | env::Options::ResolveDollarBrace | env::Options::Unescape;
+    CHECK(env::resolve("${HOPEFULLY_UNSET_VAR:-fallback}", max_iterations, options) == "${HOPEFULLY_UNSET_VAR:-fallback}");
+  }
+
+  // ResolvePercent disabled: %VAR% is left as-is
+  {
+    env::Options options = env::Options::ResolveDollar | env::Options::ResolveDollarBrace | env::Options::Unescape;
+    CHECK(env::resolve("%USERPROFILE%", max_iterations, options) == "%USERPROFILE%");
+  }
+
+  // Unescape disabled: escape sequences are restored to original backslash form
+  {
+    env::Options options = env::Options::ResolveDollar | env::Options::ResolveDollarBrace | env::Options::ResolvePercent;
+    CHECK(env::resolve("\\$HOME", max_iterations, options) == "\\$HOME");
+    CHECK(env::resolve("%%VAR%%", max_iterations, options) == "%%VAR%%");
+  }
+
+  // Unescape enabled: escape sequences are stripped
+  {
+    CHECK(env::resolve("\\$HOME", max_iterations, env::Options::Default) == "$HOME");
+    CHECK(env::resolve("%%VAR%%", max_iterations, env::Options::Default) == "%VAR%");
+    CHECK(env::resolve("\\\\path", max_iterations, env::Options::Default) == "\\path");
+  }
+
+  // None: nothing is resolved or unescaped
+  {
+    CHECK(env::resolve("$HOME", max_iterations, env::Options::None) == "$HOME");
+    CHECK(env::resolve("%VAR%", max_iterations, env::Options::None) == "%VAR%");
+    CHECK(env::resolve("\\$HOME", max_iterations, env::Options::None) == "\\$HOME");
+  }
+}
+
 TEST_CASE("absolute() from relative path") {
   TestEnvironment environment;
   PathLib::Path path(environment.file_a_relative_to_root);
@@ -487,6 +565,36 @@ TEST_CASE("resolve_environment_variables() variable boundary detection") {
   _putenv_s("VAR_1", "");
   _putenv_s("VAR2", "");
 #endif
+}
+
+TEST_CASE("resolve_environment_variables() variable escape sequences") {
+  // dollar is escaped
+  {
+    PathLib::Path path("\\$VAR_1");
+    path.resolve_environment_variables();
+    CHECK(path.string() == "$VAR_1");
+  }
+
+  // percent is escaped
+  {
+    PathLib::Path path("%%VAR_1%%");
+    path.resolve_environment_variables();
+    CHECK(path.string() == "%VAR_1%");
+  }
+
+  // variable with escaped default value
+  {
+    PathLib::Path path("${VAR:-\\\\}_1");
+    path.resolve_environment_variables();
+    CHECK(path.string() == "\\_1");
+  }
+
+  // variable with broken pattern by escape sequence
+  {
+    PathLib::Path path("${VAR\\}_1}");
+    path.resolve_environment_variables();
+    CHECK(path.string() == "${VAR}_1}");
+  }
 }
 
 TEST_CASE("resolve_environment_variables() non-destructive") {

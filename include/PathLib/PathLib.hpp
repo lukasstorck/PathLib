@@ -14,6 +14,7 @@
 #include <cstring>
 #include <filesystem>
 #include <fstream>
+#include <optional>
 #include <utility>
 #include <variant>
 #include <vector>
@@ -129,7 +130,7 @@ std::pair<fs::perms, fs::perm_options> symbolic_permission_string_to_fs_perms_an
 namespace env {
 
 inline const char* HOME_UNIX    = "$HOME";
-inline const char* HOME_WINDOWS = "%%USERPROFILE%%";
+inline const char* HOME_WINDOWS = "%USERPROFILE%";
 
 class Options {
  public:
@@ -142,7 +143,10 @@ class Options {
     ResolveDollarBrace        = 1 << 4,
     ResolveDollarBraceDefault = 1 << 5,
     ResolvePercent            = 1 << 6,
-    Default                   = ResolveTilde | ResolveXDGPaths | ResolveDollar | ResolveDollarBrace | ResolveDollarBraceDefault | ResolvePercent,
+    // AllowLowerCaseInVariableNames    = 1 << 7, // TODO: implement, currently allowed
+    // AllowNumericStartInVariableNames = 1 << 8, // TODO: implement, currently allowed
+    Unescape = 1 << 9,
+    Default  = ResolveTilde | ResolveXDGPaths | ResolveDollar | ResolveDollarBrace | ResolveDollarBraceDefault | ResolvePercent | Unescape,
   };
 
   Options() : bits_(std::to_underlying(OptionsFlag::None)) {}
@@ -157,6 +161,12 @@ class Options {
   Options& operator|=(OptionsFlag flag) {
     this->bits_ |= std::to_underlying(flag);
     return *this;
+  }
+
+  friend Options operator|(OptionsFlag lhs, OptionsFlag rhs) {
+    Options result;
+    result.bits_ = std::to_underlying(lhs) | std::to_underlying(rhs);
+    return result;
   }
 
   bool has(OptionsFlag flag) const { return (this->bits_ & std::to_underlying(flag)) != 0; }
@@ -183,86 +193,254 @@ inline std::string get(const std::string& name, const std::string& default_value
   return {};
 }
 
+inline std::string escape(const char* input) {
+  if (!input) return {};
+
+  std::string result;
+
+  for (size_t i = 0, len = strlen(input); i < len; ++i) {
+    switch (input[i]) {
+      case '\\':
+      case '$':
+      case '{':
+      case '}':
+        result += '\\';
+        break;
+      case '%':
+        result += '%';
+        break;
+      default:
+        break;
+    }
+    result += input[i];
+  }
+  return result;
+}
+
+inline std::string unescape(const char* input) {
+  if (!input) return {};
+
+  std::string result;
+
+  for (size_t i = 0, len = strlen(input); i < len; ++i) {
+    // skip escape character for \\, \$, \{, \} and %%
+    if (i + 1 < len && ((input[i] == '\\' && (input[i + 1] == '\\' || input[i + 1] == '$' || input[i + 1] == '{' || input[i + 1] == '}')) ||
+                        (input[i] == '%' && input[i + 1] == '%'))) {
+      i++;
+    }
+    result += input[i];
+  }
+  return result;
+}
+
 inline std::string resolve(const char* input, size_t max_iterations = 3, Options options = Options::Default) {
   if (!input) return {};
 
-  std::string current(input);
+  std::string current_string(input);
 
   // replace ~ with HOME_WINDOWS or HOME_UNIX
-
-  if (options.has(Options::ResolveTilde) && current.starts_with('~')) {
+  if (options.has(Options::ResolveTilde) && current_string.starts_with('~')) {
     std::string home_variable_name = options.has(Options::TildeWindowsHomeStyle) ? HOME_WINDOWS : HOME_UNIX;
-
-    if (current.size() == 1) {
-      current = home_variable_name;
-    } else if (current[1] == '/' || current[1] == '\\') {
-      current = home_variable_name + current.substr(1);
+    if (current_string.size() == 1) {
+      current_string = home_variable_name;
+    } else if (current_string[1] == '/' || current_string[1] == '\\') {
+      current_string = home_variable_name + current_string.substr(1);
     }
   }
 
-  // iteratively resolve environment variables
+  for (size_t iter = 0; iter < max_iterations; ++iter) {
+    enum class State {
+      LookingForAnyPatternStart,
+      DollarFound,
+      LookingForPlainVariableEnd,
+      LookingForBraceVariableEndOrDefaultStart,
+      LookingForBraceVariableDefaultEnd,
+      LookingForPercentVariableEnd,
+      PatternCompleted,
+    };
 
-  for (size_t i = 0; i < max_iterations; ++i) {
-    std::string next = current;
+    State state = State::LookingForAnyPatternStart;
 
-    size_t start = std::string::npos;
-    size_t end   = std::string::npos;
+    size_t pattern_start               = std::string::npos;
+    size_t pattern_end                 = std::string::npos;
+    size_t default_parameter_separator = std::string::npos;
+    size_t variable_start              = std::string::npos;
+    size_t variable_end                = std::string::npos;
+    size_t default_value_start         = std::string::npos;
+    size_t default_value_end           = std::string::npos;
 
-    std::string var_name;
-    std::string default_value;
+    const size_t total_length = current_string.size();
+    size_t i                  = 0;
 
-    // find a environment variable pattern
+    while (i <= total_length && state != State::PatternCompleted) {
+      const char current_char = (i < total_length) ? current_string[i] : '\0';
 
-    if ((start = next.find("${")) != std::string::npos) {  // pattern: ${VAR:-default}
-      size_t close = next.find('}', start);
-      if (close == std::string::npos) break;
+      switch (state) {
+        case State::PatternCompleted:
+          break;
 
-      std::string expr = next.substr(start + 2, close - start - 2);
-      size_t pos       = expr.find(":-");
+        case State::LookingForAnyPatternStart: {
+          if (current_char == '\\' && i + 1 < total_length &&
+              (current_string[i + 1] == '\\' || current_string[i + 1] == '$' || current_string[i + 1] == '{' || current_string[i + 1] == '}')) {
+            // backslash escape sequence: skip escaped character
+            i += 2;
+            continue;
+          } else if (current_char == '%' && i + 1 < total_length && current_string[i + 1] == '%') {
+            // percent escape sequence: skip escaped percent
+            i += 2;
+            continue;
+          } else if ((options.has(Options::ResolveDollar) || options.has(Options::ResolveDollarBrace) || options.has(Options::ResolveDollarBraceDefault)) &&
+                     current_char == '$') {
+            pattern_start = i;
+            state         = State::DollarFound;
+            i++;
+            continue;
+          } else if (options.has(Options::ResolvePercent) && current_char == '%') {
+            pattern_start = i;
+            state         = State::LookingForPercentVariableEnd;
+            i++;
+            continue;
+          } else {
+            i++;
+            continue;
+          }
+        }
 
-      if (pos != std::string::npos) {
-        var_name      = expr.substr(0, pos);
-        default_value = expr.substr(pos + 2);
-      } else {
-        var_name = expr;
+        case State::DollarFound: {
+          if ((options.has(Options::ResolveDollarBrace) || options.has(Options::ResolveDollarBraceDefault)) && current_char == '{') {
+            state = State::LookingForBraceVariableEndOrDefaultStart;
+            i++;
+            continue;
+          } else if (options.has(Options::ResolveDollar) && (std::isalpha(static_cast<unsigned char>(current_char)) || current_char == '_')) {
+            // valid variable name character
+            state = State::LookingForPlainVariableEnd;
+            i++;
+            continue;
+          } else {
+            // current character is not an opening brace or a valid variable name start
+            state = State::LookingForAnyPatternStart;
+            continue;
+          }
+        }
+
+        case State::LookingForBraceVariableEndOrDefaultStart: {
+          if (options.has(Options::ResolveDollarBraceDefault) && current_char == ':' && i + 2 < total_length && current_string[i + 1] == '-') {
+            // found default value delimiter ":-" plus at least one more character
+            // after that for closing bracket (i + 2 < total_length)
+            variable_start              = pattern_start + 2;
+            variable_end                = i;
+            default_parameter_separator = i;
+
+            state = State::LookingForBraceVariableDefaultEnd;
+            i += 2;
+            continue;
+          } else if (options.has(Options::ResolveDollarBrace) && current_char == '}') {
+            pattern_end    = i + 1;
+            variable_start = pattern_start + 2;
+            variable_end   = i;
+
+            state = State::PatternCompleted;
+            continue;
+          } else if (options.has(Options::ResolveDollarBrace) && (std::isalpha(static_cast<unsigned char>(current_char)) || current_char == '_')) {
+            // valid variable name character
+            i++;
+            continue;
+          } else {
+            // current character is not a closing brace, colon or a valid variable name character
+            state = State::LookingForAnyPatternStart;
+            continue;
+          }
+        }
+
+        case State::LookingForBraceVariableDefaultEnd: {
+          if (current_char == '}') {
+            pattern_end         = i + 1;
+            default_value_start = default_parameter_separator + 2;
+            default_value_end   = i;
+
+            state = State::PatternCompleted;
+            continue;
+          } else if (current_char == '\\' && i + 1 < total_length && (current_string[i + 1] == '\\' || current_string[i + 1] == '}')) {
+            // backslash escape sequence for \\ and \}: skip escaped character
+            i += 2;
+            continue;
+          } else {
+            // accept any other character for default value
+            i++;
+            continue;
+          }
+        }
+
+        case State::LookingForPlainVariableEnd: {
+          if (std::isalnum(static_cast<unsigned char>(current_char)) || current_char == '_') {
+            i++;
+            continue;
+          } else {
+            // non variable name character: end variable name
+            pattern_end    = i;
+            variable_start = pattern_start + 1;
+            variable_end   = i;
+
+            state = State::PatternCompleted;
+            continue;
+          }
+        }
+
+        case State::LookingForPercentVariableEnd: {
+          if (current_char == '%') {
+            pattern_end    = i + 1;
+            variable_start = pattern_start + 1;
+            variable_end   = i;
+
+            state = State::PatternCompleted;
+            continue;
+          } else {
+            i++;
+            continue;
+          }
+        }
       }
 
-      end = close + 1;
-    } else if ((start = next.find('$')) != std::string::npos) {  // pattern: $VAR
-      size_t var_start = start + 1;
-      size_t var_end   = var_start;
-
-      while (var_end < next.size() && (std::isalnum(static_cast<unsigned char>(next[var_end])) || next[var_end] == '_')) {
-        ++var_end;
-      }
-
-      if (var_end == var_start) break;
-
-      var_name = next.substr(var_start, var_end - var_start);
-      end      = var_end;
-    } else if ((start = next.find('%')) != std::string::npos) {  // pattern: %VAR%
-      size_t close = next.find('%', start + 1);
-      if (close == std::string::npos) break;
-
-      var_name = next.substr(start + 1, close - start - 1);
-      end      = close + 1;
-    } else {
-      // nothing left to replace
       break;
     }
 
-    // resolve value
-    std::string replacement = get(var_name, default_value, options);
+    if (state != State::PatternCompleted) break;
 
-    // rebuild string
-    next.replace(start, end - start, replacement);
+    std::string variable_name;
+    std::string default_value;
 
-    if (next == current) break;
+    if (state == State::PatternCompleted && variable_start != std::string::npos && variable_end != std::string::npos) {
+      variable_name = current_string.substr(variable_start, variable_end - variable_start);
+    } else {
+      variable_name.clear();
+    }
 
-    current = std::move(next);
+    if (default_value_start != std::string::npos && default_value_end != std::string::npos) {
+      default_value = current_string.substr(default_value_start, default_value_end - default_value_start);
+    } else {
+      default_value.clear();
+    }
+
+    const std::string replacement = get(variable_name, default_value, options);
+
+    std::string next;
+    next.reserve(pattern_start + replacement.size() + (total_length - pattern_end));
+    next += current_string.substr(0, pattern_start);
+    next += replacement;
+    next += current_string.substr(pattern_end);
+
+    if (next == current_string) break;
+
+    current_string = std::move(next);
   }
 
-  return current;
+  std::string result;
+  if (options.has(Options::Unescape)) {
+    result = unescape(current_string.c_str());
+  } else {
+    result = std::move(current_string);
+  }
+  return result;
 }
 inline std::string resolve(const std::string& input, size_t max_iterations = 3, Options options = Options::Default) {
   return resolve(input.c_str(), max_iterations, options);
@@ -1013,6 +1191,9 @@ class Path {
 
     return *this;
   }
+
+  // TODO: read()
+  // TODO: write()
 
 #pragma region fs_ functions
   //  ====================================================
