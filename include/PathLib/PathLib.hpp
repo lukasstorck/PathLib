@@ -793,7 +793,6 @@ class Path {
   // =================================
 
 #ifdef __linux__
-
   uid_t owner() noexcept { return this->owner(this->symlink_mode.has(SymlinkMode::FollowForStatus)); }
   uid_t owner(bool resolve_symlinks) noexcept {
     struct stat file_status;
