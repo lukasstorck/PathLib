@@ -941,12 +941,12 @@ class Path {
   bool is_symlink(bool resolve_symlinks) noexcept { return this->check(IsSymlink, resolve_symlinks); }
   bool is_unknown(bool resolve_symlinks) noexcept { return this->check(IsUnknown, resolve_symlinks); }
 
-#ifdef __linux__
   bool is_readable() noexcept { return this->is_readable(this->symlink_mode.has(SymlinkMode::FollowForStatus)); }
   bool is_readable(bool resolve_symlinks) noexcept {
     Status status = this->status(resolve_symlinks);
     if (!status.has_all(Exists)) return false;
 
+#ifdef __linux__
     uid_t file_owner_id = this->owner(resolve_symlinks);
     gid_t file_group_id = this->group(resolve_symlinks);
 
@@ -963,6 +963,9 @@ class Path {
 
     // check file other permission
     return status.has_all(HasOtherRead);
+#else
+    return true;
+#endif
   }
 
   bool is_writable() noexcept { return this->is_writable(this->symlink_mode.has(SymlinkMode::FollowForStatus)); }
@@ -975,6 +978,7 @@ class Path {
       return parent_is_writable;
     }
 
+#ifdef __linux__
     uid_t file_owner_id = this->owner(resolve_symlinks);
     gid_t file_group_id = this->group(resolve_symlinks);
 
@@ -991,8 +995,10 @@ class Path {
 
     // check file other permission
     return status.has_all(HasOtherWrite);
-  }
+#else
+    return true;
 #endif
+  }
 
   bool is_root() noexcept {
     bool result = false;
