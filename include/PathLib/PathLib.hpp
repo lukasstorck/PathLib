@@ -151,27 +151,27 @@ class Options {
               Unescape,
   };
 
-  Options() : bits_(std::to_underlying(OptionsFlag::None)) {}
-  Options(OptionsFlag flag) : bits_(std::to_underlying(flag)) {}
+  constexpr Options() noexcept : bits_(std::to_underlying(OptionsFlag::None)) {}
+  constexpr Options(OptionsFlag flag) noexcept : bits_(std::to_underlying(flag)) {}
 
-  Options operator|(OptionsFlag flag) const {
+  constexpr Options operator|(OptionsFlag flag) const noexcept {
     Options result;
     result.bits_ = this->bits_ | std::to_underlying(flag);
     return result;
   }
 
-  Options& operator|=(OptionsFlag flag) {
+  constexpr Options& operator|=(OptionsFlag flag) noexcept {
     this->bits_ |= std::to_underlying(flag);
     return *this;
   }
 
-  friend Options operator|(OptionsFlag lhs, OptionsFlag rhs) {
+  friend constexpr Options operator|(OptionsFlag lhs, OptionsFlag rhs) noexcept {
     Options result;
     result.bits_ = std::to_underlying(lhs) | std::to_underlying(rhs);
     return result;
   }
 
-  bool has(OptionsFlag flag) const { return (this->bits_ & std::to_underlying(flag)) != 0; }
+  constexpr bool has(OptionsFlag flag) const noexcept { return (this->bits_ & std::to_underlying(flag)) != 0; }
 
  private:
   unsigned bits_;
@@ -516,7 +516,7 @@ enum class SymlinkMode : unsigned {
   AlwaysFollow        = FollowForStatus | FollowForResolution,
 };
 
-constexpr SymlinkMode operator|(SymlinkMode a, SymlinkMode b) { return static_cast<SymlinkMode>(std::to_underlying(a) | std::to_underlying(b)); }
+constexpr SymlinkMode operator|(SymlinkMode a, SymlinkMode b) noexcept { return static_cast<SymlinkMode>(std::to_underlying(a) | std::to_underlying(b)); }
 
 class SymlinkPolicy {
  public:
